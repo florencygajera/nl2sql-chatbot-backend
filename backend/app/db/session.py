@@ -15,9 +15,37 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+DEFAULT_DATABASE_URL = settings.DATABASE_URL
+
+def _mask_db_url(url: str) -> str:
+    """Hide passwords in URLs for safe logging / status responses."""
+    try:
+        if "://" not in url or "@" not in url:
+            return url
+        scheme, rest = url.split("://", 1)
+        creds_and_host = rest.split("@", 1)
+        if len(creds_and_host) != 2:
+            return url
+        creds, host_and_path = creds_and_host
+        if ":" in creds:
+            user = creds.split(":", 1)[0]
+            return f"{scheme}://{user}:***@{host_and_path}"
+        return url
+    except Exception:
+        return url
+
+
+# NOTE: This is an in-memory state (single-process). If you run multiple
+# workers, each worker keeps its own active DB engine.
 active_db_info = {
     "url": settings.DATABASE_URL,
-    "status": "connected"
+    "masked_url": _mask_db_url(settings.DATABASE_URL),
+    "status": "connected",
+    "source": {
+        "attach_mode": "ENV_DEFAULT",  # ENV_DEFAULT | UPLOAD_FILE | CONNECTION
+        "db_type": "postgres",
+        "details": {},
+    },
 }
 
 def create_app_engine(url: str):
@@ -58,7 +86,23 @@ def set_database_url(new_url: str) -> None:
     engine = create_app_engine(new_url)
     SessionLocal.configure(bind=engine)
     active_db_info["url"] = new_url
+    active_db_info["masked_url"] = _mask_db_url(new_url)
     active_db_info["status"] = "connected"
+
+
+def set_database_source(*, attach_mode: str, db_type: str, details: dict) -> None:
+    """Attach metadata about how the current DB was configured."""
+    active_db_info["source"] = {
+        "attach_mode": attach_mode,
+        "db_type": db_type,
+        "details": details,
+    }
+
+
+def reset_database_url() -> None:
+    """Reset to the DATABASE_URL from environment/config."""
+    set_database_url(DEFAULT_DATABASE_URL)
+    set_database_source(attach_mode="ENV_DEFAULT", db_type="postgres", details={})
 
 
 def get_db() -> Generator[Session, None, None]:

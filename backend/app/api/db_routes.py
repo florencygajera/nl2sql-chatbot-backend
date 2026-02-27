@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 
 from app.db.session import (
     set_database_url,
+    set_database_source,
+    reset_database_url,
     get_schema_summary,
     active_db_info,
     ping_database
@@ -23,6 +25,8 @@ UPLOAD_DIR = Path("uploaded_db_files")
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
 
 DbType = Literal["postgres", "mysql", "sqlite"]
+
+AllowedUploadExt = {".sql", ".dump", ".backup", ".tar", ".gz", ".sqlite", ".db"}
 
 # ---------------------------
 # Helpers
@@ -66,6 +70,27 @@ def build_database_url(
     raise ValueError("Unsupported db_type")
 
 
+def _safe_filename(name: str) -> str:
+    name = name.replace("..", "_").replace("/", "_").replace("\\", "_")
+    return name.strip() or "uploaded"
+
+
+def _require_pg_tools() -> None:
+    """Ensure createdb/psql/pg_restore exist when importing PG dumps."""
+    import shutil as _shutil
+
+    missing = [x for x in ("createdb", "psql", "pg_restore") if _shutil.which(x) is None]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "PostgreSQL client tools are required to import .sql/.dump/.backup/.tar files. "
+                f"Missing: {', '.join(missing)}. "
+                "Install PostgreSQL client tools and ensure they are on PATH, or upload a .sqlite/.db file instead."
+            ),
+        )
+
+
 # ---------------------------
 # 1) Connect via form/json
 # ---------------------------
@@ -95,6 +120,18 @@ def connect_db(payload: DBConnectRequest):
             sslmode=payload.sslmode,
         )
         set_database_url(url)
+        set_database_source(
+            attach_mode="CONNECTION",
+            db_type=payload.db_type,
+            details={
+                "host": payload.host,
+                "port": payload.port,
+                "database": payload.database,
+                "username": payload.username,
+                "sslmode": payload.sslmode,
+                "used_connection_string": bool(payload.connection_string),
+            },
+        )
         return {
             "ok": True,
             "database_url": url,
@@ -102,6 +139,37 @@ def connect_db(payload: DBConnectRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------------------
+# 1b) Status + detach
+# ---------------------------
+
+class ActiveDBResponse(BaseModel):
+    ok: bool
+    status: str
+    masked_database_url: str
+    source: dict
+    schema: str | None = None
+
+
+@router.get("/source", response_model=ActiveDBResponse)
+def get_active_db_source(include_schema: bool = False):
+    db_ok = ping_database()
+    return ActiveDBResponse(
+        ok=db_ok,
+        status=active_db_info.get("status", "unknown"),
+        masked_database_url=active_db_info.get("masked_url") or active_db_info.get("url"),
+        source=active_db_info.get("source", {}),
+        schema=get_schema_summary() if include_schema and db_ok else None,
+    )
+
+
+@router.post("/detach")
+def detach_db_source():
+    """Reset back to the default DATABASE_URL from .env/config."""
+    reset_database_url()
+    return {"ok": True, "masked_database_url": active_db_info.get("masked_url")}
 
 
 # ---------------------------
@@ -132,8 +200,15 @@ async def upload_db_file(
     - .gz -> handles compressed formats
     """
 
-    filename = file.filename or "uploaded"
+    filename = _safe_filename(file.filename or "uploaded")
     ext = Path(filename).suffix.lower()
+    if ext not in AllowedUploadExt:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(AllowedUploadExt))}."
+            ),
+        )
     save_path = UPLOAD_DIR / filename
 
     data = await file.read()
@@ -153,11 +228,17 @@ async def upload_db_file(
         url = f"sqlite:///{abs_path}"
         try:
             set_database_url(url)
+            set_database_source(
+                attach_mode="UPLOAD_FILE",
+                db_type="sqlite",
+                details={"filename": save_path.name, "path": abs_path},
+            )
             return UploadResponse(ok=True, database_url=url, database_name=save_path.name, schema=get_schema_summary())
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
     if ext in [".sql", ".dump", ".backup", ".tar"]:
+        _require_pg_tools()
         env = os.environ.copy()
         env["PGPASSWORD"] = pg_password
 
@@ -167,7 +248,7 @@ async def upload_db_file(
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            shell=True,
+            check=False,
         )
 
         if ext == ".sql":
@@ -176,7 +257,7 @@ async def upload_db_file(
                 env=env,
                 capture_output=True,
                 text=True,
-                shell=True,
+                check=False,
             )
             if p.returncode != 0:
                 raise HTTPException(status_code=400, detail=p.stderr)
@@ -186,7 +267,7 @@ async def upload_db_file(
                 env=env,
                 capture_output=True,
                 text=True,
-                shell=True,
+                check=False,
             )
             if p.returncode != 0:
                 raise HTTPException(status_code=400, detail=p.stderr)
@@ -194,11 +275,44 @@ async def upload_db_file(
         url = f"postgresql+psycopg2://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{db_name}"
         try:
             set_database_url(url)
+            set_database_source(
+                attach_mode="UPLOAD_FILE",
+                db_type="postgres",
+                details={
+                    "filename": save_path.name,
+                    "db_name": db_name,
+                    "pg_host": pg_host,
+                    "pg_port": pg_port,
+                    "pg_user": pg_user,
+                },
+            )
             return UploadResponse(ok=True, database_url=url, database_name=db_name, schema=get_schema_summary())
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+
+# ---------------------------
+# 2b) New "Database Source" alias endpoints
+# ---------------------------
+
+# These aliases make the frontend workflow clearer:
+#   - POST /db/source/connect
+#   - POST /db/source/upload
+
+router.add_api_route(
+    "/source/connect",
+    connect_db,
+    methods=["POST"],
+    summary="Attach DB Source (connect)",
+)
+
+router.add_api_route(
+    "/source/upload",
+    upload_db_file,
+    methods=["POST"],
+    summary="Attach DB Source (upload file)",
+)
+
 
 
 # ---------------------------
@@ -206,7 +320,12 @@ async def upload_db_file(
 # ---------------------------
 @router.get("/active")
 def get_active_db():
-    return active_db_info
+    # Avoid leaking secrets
+    return {
+        "status": active_db_info.get("status"),
+        "masked_url": active_db_info.get("masked_url"),
+        "source": active_db_info.get("source", {}),
+    }
 
 
 # ---------------------------
@@ -217,6 +336,6 @@ def get_db_health():
     is_up = ping_database()
     return {
         "status": "up" if is_up else "down",
-        "url": active_db_info.get("url"),
+        "masked_url": active_db_info.get("masked_url"),
         "error": None if is_up else "Ping failed"
     }
