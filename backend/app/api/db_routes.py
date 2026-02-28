@@ -150,7 +150,7 @@ class ActiveDBResponse(BaseModel):
     status: str
     masked_database_url: str
     source: dict
-    schema: str | None = None
+    db_schema: str | None = None
 
 
 @router.get("/source", response_model=ActiveDBResponse)
@@ -161,7 +161,7 @@ def get_active_db_source(include_schema: bool = False):
         status=active_db_info.get("status", "unknown"),
         masked_database_url=active_db_info.get("masked_url") or active_db_info.get("url"),
         source=active_db_info.get("source", {}),
-        schema=get_schema_summary() if include_schema and db_ok else None,
+        db_schema=get_schema_summary() if include_schema and db_ok else None,
     )
 
 
@@ -180,7 +180,7 @@ class UploadResponse(BaseModel):
     ok: bool
     database_url: str
     database_name: str
-    schema: str
+    db_schema: str
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -233,7 +233,7 @@ async def upload_db_file(
                 db_type="sqlite",
                 details={"filename": save_path.name, "path": abs_path},
             )
-            return UploadResponse(ok=True, database_url=url, database_name=save_path.name, schema=get_schema_summary())
+            return UploadResponse(ok=True, database_url=url, database_name=save_path.name, db_schema=get_schema_summary())
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -286,7 +286,7 @@ async def upload_db_file(
                     "pg_user": pg_user,
                 },
             )
-            return UploadResponse(ok=True, database_url=url, database_name=db_name, schema=get_schema_summary())
+            return UploadResponse(ok=True, database_url=url, database_name=db_name, db_schema=get_schema_summary())
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
