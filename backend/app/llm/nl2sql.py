@@ -15,6 +15,7 @@ STRICT RULES:
 - Output ONLY SELECT queries.
 - No markdown. No explanations. No code fences.
 - Never use INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/CREATE.
+- EXTREMELY IMPORTANT: You MUST enclose all Table Names and Column Names in double quotes exactly as they appear in the schema (e.g. "TaxRequest_Master", "ReceiptNo"). Do not change the capitalization.
 - If returning raw rows, add LIMIT 50.
 
 DATABASE SCHEMA:

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # ── LLM (Local, free) ─────────────────────────────────────────────────────
     LLM_PROVIDER: str = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "mistral"
+    OLLAMA_MODEL: str = "qwen2.5-coder:1.5b"
 
     # ── Query safety ──────────────────────────────────────────────────────────
     DEFAULT_ROW_LIMIT: int = 50

@@ -24,7 +24,7 @@ class LLMClient:
                 "prompt": prompt,
                 "stream": False,
             },
-            timeout=60,
+            timeout=300,
         )
         r.raise_for_status()
         return r.json().get("response", "").strip()

@@ -779,6 +779,128 @@
     .param-val {
       color: #c3e88d;
     }
+
+    .form-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .form-group {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .form-control {
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+      transition: border-color 0.2s;
+      width: 100%;
+    }
+
+    .form-control:focus {
+      border-color: var(--accent);
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 12, 16, 0.85);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: 100%;
+      max-width: 440px;
+      padding: 24px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      animation: fadeUp 0.3s ease;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .modal-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 20px;
+      cursor: pointer;
+    }
+
+    .modal-close:hover {
+      color: var(--text);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #080c10;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-weight: 700;
+      font-family: var(--font-ui);
+      cursor: pointer;
+      width: 100%;
+      margin-top: 10px;
+      transition: all 0.2s;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent2);
+    }
+
+    .icon-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      color: var(--accent);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .icon-btn:hover {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+      transform: translateY(-1px);
+    }
   </style>
 </head>
 
@@ -793,9 +915,9 @@
       </div>
 
       <div class="header-right">
-        <!-- ✅ + Add SQL file button -->
+        <button class="icon-btn" id="addConnBtn" title="Connect Database">🔌</button>
         <button class="add-sql-btn" id="addSqlBtn" title="Add .sql file">+</button>
-        <input id="sqlFileInput" type="file" accept=".sql" style="display:none" />
+        <input id="sqlFileInput" type="file" accept=".sql,.sqlite,.db,.gz,.dump,.backup,.tar" style="display:none" />
 
         <input class="backend-url-input" id="backendUrl" type="text" value="http://localhost:8000"
           placeholder="Backend URL" />
@@ -839,16 +961,163 @@
 
   </div>
 
+  <!-- ── Connection Modal ── -->
+  <div class="modal-overlay" id="connModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">Connect Database</h3>
+        <button class="modal-close" onclick="closeConnModal()">×</button>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label>Engine</label>
+        <select class="form-control" id="connType" onchange="toggleConnFields()">
+          <option value="postgres">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+          <option value="sqlite">SQLite</option>
+        </select>
+      </div>
+
+      <div id="connStandardFields">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Host</label>
+            <input type="text" class="form-control" id="connHost" value="localhost" />
+          </div>
+          <div class="form-group" style="flex: 0.5;">
+            <label>Port</label>
+            <input type="number" class="form-control" id="connPort" value="5432" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Database</label>
+            <input type="text" class="form-control" id="connDb" placeholder="mydb" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" class="form-control" id="connUser" placeholder="postgres" />
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" class="form-control" id="connPass" />
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label>SSL Mode (Optional)</label>
+          <input type="text" class="form-control" id="connSsl" placeholder="disable, require, etc." />
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label>Or Connection String</label>
+        <input type="text" class="form-control" id="connString" placeholder="postgresql+psycopg2://user:pass@host/db" />
+      </div>
+
+      <button class="btn-primary" onclick="submitConnection()">Connect</button>
+    </div>
+  </div>
+
   <script>
     // ── Config ──────────────────────────────────────────────────────────────
     const getBackendUrl = () => document.getElementById('backendUrl').value.replace(/\/$/, '');
 
-    // ── SQL File (+) Upload (FIXED: uploads to backend + resets input) ──────
     const addSqlBtn = document.getElementById('addSqlBtn');
     const sqlFileInput = document.getElementById('sqlFileInput');
+    const connModal = document.getElementById('connModal');
+    const addConnBtn = document.getElementById('addConnBtn');
 
     let uploadedSqlText = "";
     let uploadedSqlName = "";
+
+    // ── Connection Modal Handlers ──
+    addConnBtn.addEventListener('click', () => {
+      connModal.style.display = 'flex';
+    });
+
+    function closeConnModal() {
+      connModal.style.display = 'none';
+    }
+
+    function toggleConnFields() {
+      const type = document.getElementById('connType').value;
+      const stdFields = document.getElementById('connStandardFields');
+      if (type === 'sqlite') {
+        stdFields.style.opacity = '0.4';
+        stdFields.style.pointerEvents = 'none';
+        document.getElementById('connDb').placeholder = "Path to database file (.db or .sqlite)";
+        stdFields.style.opacity = '1'; /* let them edit db path */
+        document.getElementById('connHost').disabled = true;
+        document.getElementById('connPort').disabled = true;
+        document.getElementById('connUser').disabled = true;
+        document.getElementById('connPass').disabled = true;
+        document.getElementById('connDb').disabled = false;
+        stdFields.querySelector('.form-row:first-child').style.display = 'none';
+        stdFields.querySelector('.form-row:nth-child(3)').style.display = 'none';
+      } else {
+        stdFields.style.opacity = '1';
+        stdFields.style.pointerEvents = 'auto';
+        document.getElementById('connHost').disabled = false;
+        document.getElementById('connPort').disabled = false;
+        document.getElementById('connUser').disabled = false;
+        document.getElementById('connPass').disabled = false;
+        document.getElementById('connDb').disabled = false;
+        stdFields.querySelector('.form-row:first-child').style.display = 'flex';
+        stdFields.querySelector('.form-row:nth-child(3)').style.display = 'flex';
+      }
+    }
+
+    async function submitConnection() {
+      const payload = {
+        db_type: document.getElementById('connType').value,
+      };
+
+      const connStr = document.getElementById('connString').value.trim();
+      if (connStr) {
+        payload.connection_string = connStr;
+      } else {
+        if (payload.db_type !== 'sqlite') {
+          payload.host = document.getElementById('connHost').value;
+          payload.port = parseInt(document.getElementById('connPort').value) || (payload.db_type === 'postgres' ? 5432 : 3306);
+          payload.database = document.getElementById('connDb').value;
+          payload.username = document.getElementById('connUser').value;
+          payload.password = document.getElementById('connPass').value;
+          const ssl = document.getElementById('connSsl').value.trim();
+          if (ssl) payload.sslmode = ssl;
+        } else {
+          payload.database = document.getElementById('connDb').value;
+        }
+      }
+
+      closeConnModal();
+      hideWelcome();
+      appendBotResponse({
+        type: "CHAT",
+        answer: `🔌 Connecting to ${payload.db_type} database...`
+      });
+
+      try {
+        const res = await fetch(`${getBackendUrl()}/api/v1/db/source/connect`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+        appendBotResponse({
+          type: "CHAT",
+          answer: `✅ Database connected successfully! Database URL: ${data.database_url}`
+        });
+        checkHealth();
+      } catch (err) {
+        appendBotError(err.message || "Failed to connect to database");
+      }
+    }
 
     addSqlBtn.addEventListener('click', () => {
       sqlFileInput.value = ""; // ✅ important: allow selecting same file again
@@ -859,26 +1128,27 @@
       const file = sqlFileInput.files?.[0];
       if (!file) return;
 
-      if (!file.name.toLowerCase().endsWith('.sql')) {
-        alert('Please select a .sql file');
+      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      const allowedExts = ['.sql', '.dump', '.backup', '.tar', '.gz', '.sqlite', '.db'];
+      if (!allowedExts.includes(ext)) {
+        alert('Please select a valid database file (' + allowedExts.join(', ') + ')');
         return;
       }
 
-      uploadedSqlText = await file.text();
       uploadedSqlName = file.name;
 
       hideWelcome();
       appendBotResponse({
         type: "CHAT",
-        answer: `📄 Loaded SQL file: "${uploadedSqlName}" (${uploadedSqlText.length} chars). Uploading to backend...`
+        answer: `📄 Selected file: "${uploadedSqlName}" (${(file.size / 1024).toFixed(1)} KB). Uploading to backend...`
       });
 
-      // ✅ Upload to backend endpoint: POST /api/v1/upload-sql
+      // ✅ Upload to backend endpoint: POST /api/v1/db/source/upload
       try {
         const formData = new FormData();
         formData.append("file", file);
 
-        const res = await fetch(`${getBackendUrl()}/api/v1/upload-sql`, {
+        const res = await fetch(`${getBackendUrl()}/api/v1/db/source/upload`, {
           method: "POST",
           body: formData,
           signal: AbortSignal.timeout(30000),
@@ -965,7 +1235,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(60000),
+          signal: AbortSignal.timeout(300000), // 5 minutes (for local LLM loading time)
         });
 
         removeTyping(typingId);

@@ -17,7 +17,7 @@ def call_ollama(prompt: str) -> str:
             "prompt": prompt,
             "stream": False,
         },
-        timeout=60,
+        timeout=300,
     )
     resp.raise_for_status()
     data = resp.json()
