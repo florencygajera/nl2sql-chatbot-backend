@@ -25,9 +25,11 @@ DATABASE SCHEMA:
 """.strip()
     
     raw = _client.generate(prompt).strip()
-    if raw.startswith("```sql") and raw.endswith("```"):
-        raw = raw[6:-3].strip()
-    elif raw.startswith("```") and raw.endswith("```"):
-        raw = raw[3:-3].strip()
+    
+    import re
+    # If the LLM wraps the query in markdown (even with conversational text before it)
+    match = re.search(r"```(?:sql)?\s*(.*?)\s*```", raw, re.DOTALL | re.IGNORECASE)
+    if match:
+        raw = match.group(1).strip()
         
     return raw

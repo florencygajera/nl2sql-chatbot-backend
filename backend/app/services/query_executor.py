@@ -75,11 +75,11 @@ def execute_query(db: Session, sql: str, params: dict[str, Any]) -> QueryResult:
         raw_rows = cursor.fetchall()
 
         # Enforce hard row ceiling (defensive; SQL guard already added LIMIT)
-        if len(raw_rows) > settings.max_row_limit:
-            raw_rows = raw_rows[: settings.max_row_limit]
+        if len(raw_rows) > settings.MAX_ROW_LIMIT:
+            raw_rows = raw_rows[: settings.MAX_ROW_LIMIT]
             logger.warning(
                 "Result set exceeded max_row_limit (%d); truncated.",
-                settings.max_row_limit,
+                settings.MAX_ROW_LIMIT,
             )
 
         # Convert rows to plain lists for JSON serialisation

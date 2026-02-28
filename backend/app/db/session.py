@@ -116,16 +116,23 @@ def get_schema_summary() -> str:
     inspector = inspect(engine)
     lines: list[str] = []
 
+    ignore_cols = {"insertedby", "inserteddatetime", "updatedby", "updateddatetime"}
+    ignore_tables = {"__EFMigrationsHistory"}
+
     for table_name in inspector.get_table_names():
-        lines.append(f"Table: {table_name}")
+        if table_name in ignore_tables:
+            continue
+            
+        lines.append(f'Table: "{table_name}"')
         for col in inspector.get_columns(table_name):
-            nullable = "NULL" if col.get("nullable", True) else "NOT NULL"
-            lines.append(f"  - {col['name']} ({col['type']}, {nullable})")
+            if col['name'].lower() in ignore_cols:
+                continue
+            lines.append(f'  - "{col["name"]}" ({col["type"]})')
 
         for fk in inspector.get_foreign_keys(table_name):
             lines.append(
-                f"  FK: {fk['constrained_columns']} -> "
-                f"{fk['referred_table']}.{fk['referred_columns']}"
+                f'  FK: "{fk["constrained_columns"][0]}" -> '
+                f'"{fk["referred_table"]}"."{fk["referred_columns"][0]}"'
             )
         lines.append("")
 
