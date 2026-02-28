@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # ── Connection pool ───────────────────────────────────────────────────────
     DB_POOL_SIZE: int = 500
     DB_MAX_OVERFLOW: int = 1000
-    DB_POOL_TIMEOUT: int = 300000
+    DB_POOL_TIMEOUT: int = 300000000
     DB_POOL_RECYCLE: int = 1800000
 
 
