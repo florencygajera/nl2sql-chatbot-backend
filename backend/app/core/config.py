@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     )
 
     # ── Database ──────────────────────────────────────────────────────────────
-    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/nagrpalika"
+    DATABASE_URL: str = "sqlite:///./default.db"
 
     # ── LLM (Local, free) ─────────────────────────────────────────────────────
     LLM_PROVIDER: str = "ollama"
