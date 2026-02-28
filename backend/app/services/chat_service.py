@@ -135,6 +135,13 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
             ),
         }
 
+    # Check if we need clarification on SQL dialect
+    if "Please specify which SQL dialect" in raw_sql:
+        return {
+            "type": "CHAT",
+            "answer": raw_sql,
+        }
+
     if not raw_sql.strip():
         return {
             "type": "CHAT",
