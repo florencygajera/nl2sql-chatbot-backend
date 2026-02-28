@@ -56,7 +56,18 @@ def create_app_engine(url: str):
             "max_overflow": settings.DB_MAX_OVERFLOW,
             "pool_timeout": settings.DB_POOL_TIMEOUT,
             "pool_recycle": settings.DB_POOL_RECYCLE,
+            "connect_args": {
+                "connect_timeout": 10,  # Connection timeout in seconds
+                "options": "-c statement_timeout=30000"  # Query timeout in milliseconds
+            }
         })
+        logger.warning(
+            "DB Pool Configuration - pool_size=%d, max_overflow=%d, pool_timeout=%d (seconds), pool_recycle=%d (seconds)",
+            settings.DB_POOL_SIZE,
+            settings.DB_MAX_OVERFLOW,
+            settings.DB_POOL_TIMEOUT,
+            settings.DB_POOL_RECYCLE
+        )
     else:
         kwargs["connect_args"] = {"check_same_thread": False}
     return create_engine(url, **kwargs)
@@ -106,7 +117,13 @@ def reset_database_url() -> None:
 
 
 def get_db() -> Generator[Session, None, None]:
+    import time
+    start = time.time()
     db = SessionLocal()
+    acquire_time = time.time() - start
+    logger.debug("Database session acquired in %.3f seconds", acquire_time)
+    if acquire_time > 5:
+        logger.warning("SLOW DB CONNECTION ACQUIRE: took %.3f seconds!", acquire_time)
     try:
         yield db
     finally:

@@ -38,7 +38,7 @@ class QueryExecutionError(Exception):
 
 # ── Executor ──────────────────────────────────────────────────────────────────
 
-def execute_query(db: Session, sql: str, params: dict[str, Any]) -> QueryResult:
+def execute_query(db: Session, sql: str, params: dict[str, Any], timeout_seconds: int = 30) -> QueryResult:
     """
     Execute a validated SELECT statement and return structured results.
 
@@ -50,6 +50,8 @@ def execute_query(db: Session, sql: str, params: dict[str, Any]) -> QueryResult:
         Pre-validated SQL string. Must be a SELECT.
     params:
         Named bind parameters matching :param_name placeholders in ``sql``.
+    timeout_seconds:
+        Query execution timeout in seconds (default: 30).
 
     Returns
     -------
@@ -61,6 +63,21 @@ def execute_query(db: Session, sql: str, params: dict[str, Any]) -> QueryResult:
     QueryExecutionError
         On any database-level error.
     """
+    import signal
+    from contextlib import contextmanager
+
+    @contextmanager
+    def timeout_handler(seconds: int):
+        def handler(signum, frame):
+            raise TimeoutError(f"Query execution timed out after {seconds} seconds")
+        old_handler = signal.signal(signal.SIGALRM, handler)
+        signal.alarm(seconds)
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
     try:
         # Attempt to set the transaction as read-only (PostgreSQL supports this)
         try:
@@ -69,7 +86,10 @@ def execute_query(db: Session, sql: str, params: dict[str, Any]) -> QueryResult:
             pass  # graceful fallback for databases that don't support this
 
         stmt = text(sql)
-        cursor = db.execute(stmt, params or {})
+        
+        # Apply query timeout using signal-based approach
+        with timeout_handler(timeout_seconds):
+            cursor = db.execute(stmt, params or {})
 
         columns = list(cursor.keys())
         raw_rows = cursor.fetchall()
@@ -87,6 +107,10 @@ def execute_query(db: Session, sql: str, params: dict[str, Any]) -> QueryResult:
 
         return QueryResult(columns=columns, rows=rows, row_count=len(rows))
 
+    except TimeoutError as exc:
+        db.rollback()
+        logger.error("Query execution timed out: %s | SQL: %s", exc, sql)
+        raise QueryExecutionError(str(exc)) from exc
     except Exception as exc:
         # Roll back so the session stays usable
         db.rollback()
