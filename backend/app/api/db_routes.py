@@ -26,7 +26,7 @@ UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
 
 DbType = Literal["postgres", "mysql", "sqlite"]
 
-AllowedUploadExt = {".sql", ".dump", ".backup", ".tar", ".gz", ".sqlite", ".db"}
+AllowedUploadExt = {".sql", ".dump", ".backup", ".tar", ".gz", ".sqlite", ".db", ".bak" }
 
 # ---------------------------
 # Helpers
