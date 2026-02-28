@@ -23,6 +23,10 @@ class LLMClient:
                 "model": self.settings.OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "options": {
+                    "temperature": 0.0,
+                    "num_predict": 250
+                }
             },
             timeout=300,
         )
