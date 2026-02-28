@@ -1,28 +1,25 @@
 import sys
 sys.path.insert(0, '.')
 
+# Force reload of settings
+import importlib
+import app.core.config
+importlib.reload(app.core.config)
+
 from app.core.config import get_settings
 
 settings = get_settings()
-print(f"OLLAMA_BASE_URL: {settings.OLLAMA_BASE_URL}")
 print(f"OLLAMA_MODEL: {settings.OLLAMA_MODEL}")
 
-# Now test the LLM client
-import requests
+# Test LLM client with SQL generation
+from app.llm.nl2sql import generate_sql
+from app.db.session import get_schema_summary
 
-prompt = "What is 2+2?"
-print(f"\nCalling Ollama directly with prompt: {prompt}")
+print("\n--- Testing full flow ---")
+print("Getting schema...")
+schema = get_schema_summary()
+print(f"Schema loaded: {len(schema)} characters")
 
-r = requests.post(
-    f"{settings.OLLAMA_BASE_URL}/api/generate",
-    json={
-        "model": settings.OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-    },
-    timeout=300,
-)
-
-print(f"Status: {r.status_code}")
-data = r.json()
-print(f"Response: {data.get('response', 'NO RESPONSE')}")
+print("\nGenerating SQL...")
+sql = generate_sql("Show me all users", schema)
+print(f"Generated SQL: {sql}")

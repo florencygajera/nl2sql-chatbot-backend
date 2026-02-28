@@ -25,10 +25,10 @@ class LLMClient:
                 "stream": False,
                 "options": {
                     "temperature": 0.0,
-                    "num_predict": 250
+                    "num_predict": 100
                 }
             },
-            timeout=300,
+            timeout=60,
         )
         r.raise_for_status()
         return r.json().get("response", "").strip()

@@ -45,3 +45,6 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+# Call once at startup to ensure .env is loaded
+_settings = get_settings()

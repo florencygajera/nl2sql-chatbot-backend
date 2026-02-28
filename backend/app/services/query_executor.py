@@ -63,20 +63,28 @@ def execute_query(db: Session, sql: str, params: dict[str, Any], timeout_seconds
     QueryExecutionError
         On any database-level error.
     """
+    import platform
     import signal
     from contextlib import contextmanager
 
-    @contextmanager
-    def timeout_handler(seconds: int):
-        def handler(signum, frame):
-            raise TimeoutError(f"Query execution timed out after {seconds} seconds")
-        old_handler = signal.signal(signal.SIGALRM, handler)
-        signal.alarm(seconds)
-        try:
-            yield
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
+    # Use platform-specific timeout handling
+    if platform.system() != 'Windows':
+        @contextmanager
+        def timeout_handler(seconds: int):
+            def handler(signum, frame):
+                raise TimeoutError(f"Query execution timed out after {seconds} seconds")
+            old_handler = signal.signal(signal.SIGALRM, handler)
+            signal.alarm(seconds)
+            try:
+                yield
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+        timeout_ctx = timeout_handler(timeout_seconds)
+    else:
+        # On Windows, just use a no-op context manager (timeout handled by DB-level settings)
+        from contextlib import nullcontext
+        timeout_ctx = nullcontext()
 
     try:
         # Attempt to set the transaction as read-only (PostgreSQL supports this)
@@ -87,8 +95,8 @@ def execute_query(db: Session, sql: str, params: dict[str, Any], timeout_seconds
 
         stmt = text(sql)
         
-        # Apply query timeout using signal-based approach
-        with timeout_handler(timeout_seconds):
+        # Apply query timeout (only works on non-Windows)
+        with timeout_ctx:
             cursor = db.execute(stmt, params or {})
 
         columns = list(cursor.keys())
