@@ -17,6 +17,7 @@ settings = get_settings()
 
 DEFAULT_DATABASE_URL = settings.DATABASE_URL
 
+
 def _mask_db_url(url: str) -> str:
     """Hide passwords in URLs for safe logging / status responses."""
     try:
@@ -48,53 +49,51 @@ active_db_info = {
     },
 }
 
+
 def create_app_engine(url: str):
     kwargs = {"pool_pre_ping": True, "echo": settings.DEBUG}
-    if not url.startswith("sqlite"):
-        # Check if it's PostgreSQL - only add PostgreSQL-specific options
-        if "postgresql" in url:
-            kwargs.update({
-                "pool_size": settings.DB_POOL_SIZE,
-                "max_overflow": settings.DB_MAX_OVERFLOW,
-                "pool_timeout": settings.DB_POOL_TIMEOUT,
-                "pool_recycle": settings.DB_POOL_RECYCLE,
-                "connect_args": {
-                    "connect_timeout": 10,
-                    "options": "-c statement_timeout=30000"
-                }
-            })
-        elif "mssql" in url or "sqlserver" in url:
-            # SQL Server - use ODBC Driver 17 if available
-            kwargs.update({
-                "pool_size": settings.DB_POOL_SIZE,
-                "max_overflow": settings.DB_MAX_OVERFLOW,
-                "pool_timeout": settings.DB_POOL_TIMEOUT,
-                "pool_recycle": settings.DB_POOL_RECYCLE,
-                "connect_args": {
-                    "connect_timeout": 10,
-                }
-            })
-        else:
-            # Other databases (MySQL, etc.)
-            kwargs.update({
-                "pool_size": settings.DB_POOL_SIZE,
-                "max_overflow": settings.DB_MAX_OVERFLOW,
-                "pool_timeout": settings.DB_POOL_TIMEOUT,
-                "pool_recycle": settings.DB_POOL_RECYCLE,
-                "connect_args": {
-                    "connect_timeout": 10,
-                }
-            })
-        logger.warning(
-            "DB Pool Configuration - pool_size=%d, max_overflow=%d, pool_timeout=%d (seconds), pool_recycle=%d (seconds)",
-            settings.DB_POOL_SIZE,
-            settings.DB_MAX_OVERFLOW,
-            settings.DB_POOL_TIMEOUT,
-            settings.DB_POOL_RECYCLE
-        )
-    else:
+
+    if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+        return create_engine(url, **kwargs)
+
+    # Common pool settings for server DBs
+    kwargs.update({
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_timeout": settings.DB_POOL_TIMEOUT,
+        "pool_recycle": settings.DB_POOL_RECYCLE,
+    })
+
+    # Postgres-specific connect args
+    if "postgresql" in url:
+        kwargs["connect_args"] = {
+            "connect_timeout": 10,
+            "options": "-c statement_timeout=30000"
+        }
+
+    # MSSQL (pyodbc) connect args
+    elif "mssql" in url or "sqlserver" in url:
+        # IMPORTANT:
+        # - pyodbc does NOT use "connect_timeout" (that's for psycopg2 etc.)
+        # - pyodbc uses "timeout" (seconds)
+        kwargs["connect_args"] = {"timeout": 10}
+
+    # MySQL and others
+    else:
+        # Many DBAPIs accept connect_timeout, but not all; keep it minimal.
+        kwargs["connect_args"] = {"connect_timeout": 10}
+
+    logger.warning(
+        "DB Pool Configuration - pool_size=%d, max_overflow=%d, pool_timeout=%d (seconds), pool_recycle=%d (seconds)",
+        settings.DB_POOL_SIZE,
+        settings.DB_MAX_OVERFLOW,
+        settings.DB_POOL_TIMEOUT,
+        settings.DB_POOL_RECYCLE
+    )
+
     return create_engine(url, **kwargs)
+
 
 engine = create_app_engine(settings.DATABASE_URL)
 
@@ -105,19 +104,58 @@ SessionLocal = sessionmaker(
     expire_on_commit=False,
 )
 
+
+def _test_engine_connect(new_url: str) -> None:
+    """
+    Fast connection test with DB-specific timeout args to avoid pyodbc prelogin hangs
+    and to prevent invalid attributes from being passed to the wrong driver.
+    """
+    test_kwargs = {"pool_pre_ping": True}
+
+    if new_url.startswith("sqlite"):
+        test_kwargs["connect_args"] = {"check_same_thread": False}
+    elif "mssql" in new_url or "sqlserver" in new_url:
+        test_kwargs["connect_args"] = {"timeout": 10}
+    elif "postgresql" in new_url:
+        test_kwargs["connect_args"] = {"connect_timeout": 10}
+    else:
+        test_kwargs["connect_args"] = {"connect_timeout": 10}
+
+    test_engine = create_engine(new_url, **test_kwargs)
+    try:
+        with test_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    finally:
+        test_engine.dispose()
+
+
 def set_database_url(new_url: str) -> None:
     global engine, SessionLocal, active_db_info
-    
-    # 1. Test connection first
-    test_engine = create_engine(new_url, pool_pre_ping=True)
-    with test_engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
-    test_engine.dispose()
-    
-    # 2. Cleanup old engine
+
+    # 1) Test connection first with correct timeout arg per DB
+    test_kwargs = {"pool_pre_ping": True}
+
+    if new_url.startswith("sqlite"):
+        test_kwargs["connect_args"] = {"check_same_thread": False}
+    elif "mssql" in new_url or "sqlserver" in new_url:
+        # pyodbc uses "timeout" (not connect_timeout)
+        test_kwargs["connect_args"] = {"timeout": 10}
+    elif "postgresql" in new_url:
+        test_kwargs["connect_args"] = {"connect_timeout": 10}
+    else:
+        test_kwargs["connect_args"] = {"connect_timeout": 10}
+
+    test_engine = create_engine(new_url, **test_kwargs)
+    try:
+        with test_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    finally:
+        test_engine.dispose()
+
+    # 2) Cleanup old engine
     engine.dispose()
-    
-    # 3. Create new engine
+
+    # 3) Create new engine
     engine = create_app_engine(new_url)
     SessionLocal.configure(bind=engine)
     active_db_info["url"] = new_url
@@ -153,6 +191,7 @@ def get_db() -> Generator[Session, None, None]:
     finally:
         db.close()
 
+
 def get_schema_summary() -> str:
     inspector = inspect(engine)
     lines: list[str] = []
@@ -163,7 +202,7 @@ def get_schema_summary() -> str:
     for table_name in inspector.get_table_names():
         if table_name in ignore_tables:
             continue
-            
+
         lines.append(f'Table: "{table_name}"')
         for col in inspector.get_columns(table_name):
             if col['name'].lower() in ignore_cols:
@@ -178,6 +217,7 @@ def get_schema_summary() -> str:
         lines.append("")
 
     return "\n".join(lines).strip()
+
 
 def ping_database() -> bool:
     try:

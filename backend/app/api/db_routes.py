@@ -6,6 +6,7 @@ import gzip
 import shutil
 import uuid
 import re
+import urllib.parse
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -61,13 +62,13 @@ def build_database_url(
 ) -> str:
     """
     Build database URL using universal connection parser.
-    
+
     This function supports:
     - Full server details (host, port, database, username, password)
     - Direct connection strings in any format (ADO.NET, ODBC, JDBC, SQLAlchemy)
     - All supported database types (PostgreSQL, MySQL, MSSQL, SQLite, Oracle)
     """
-    
+
     # If connection_string is provided, try to parse it with universal connector
     if connection_string:
         try:
@@ -89,7 +90,7 @@ def build_database_url(
         except Exception:
             # Fall back to legacy parsing
             pass
-    
+
     # Fallback to original logic if universal parser fails or no connection string
     # If connection_string is provided and db_type is mssql, parse and convert it
     if connection_string and db_type == "mssql":
@@ -102,14 +103,14 @@ def build_database_url(
                 return sqlalchemy_url
             except ValueError as e:
                 raise ValueError(f"Invalid SQL Server connection string: {e}")
-        
+
         # If it's already a SQLAlchemy URL, use it directly
         if "://" in connection_string:
             return connection_string
-            
+
         # Treat as raw connection string
         return connection_string
-    
+
     if connection_string:
         return connection_string
 
@@ -136,10 +137,19 @@ def build_database_url(
         return url
 
     if db_type == "mssql":
-        # Use ODBC Driver 17 for SQL Server
-        url = f"mssql+pyodbc://{username}:{password}@{host},{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes"
+        # Use ODBC Driver 17 for SQL Server (Encrypt helps avoid prelogin handshake issues)
+        u = urllib.parse.quote_plus(username or "")
+        p = urllib.parse.quote_plus(password or "")
+        db = urllib.parse.quote_plus(database or "")
+
+        url = (
+            f"mssql+pyodbc://{u}:{p}@{host},{port}/{db}"
+            f"?driver=ODBC+Driver+17+for+SQL+Server"
+            f"&Encrypt=yes"
+            f"&TrustServerCertificate=yes"
+        )
         return url
-    
+
     if db_type == "oracle":
         url = f"oracle+oracledb://{username}:{password}@{host}:{port}/?service_name={database}"
         return url
@@ -176,25 +186,27 @@ class DBConnectRequest(BaseModel):
     connection_string: Optional[str] = None
     db_type: DbType = "postgres"
     host: Optional[str] = "localhost"
-    port: Optional[int] = 5432
+    port: Optional[int] = None  # IMPORTANT: let __init__ set defaults per db_type
     database: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
     sslmode: Optional[str] = Field(default=None, description="disable|require|verify-ca|verify-full")
     test_connection: bool = Field(default=True, description="Test connection before establishing")
-    
+
     def __init__(self, **data):
         super().__init__(**data)
         # Set default port based on db_type
         if self.port is None:
             if self.db_type == "mssql":
-                self.port = 2408
+                self.port = 1433
             elif self.db_type == "mysql":
                 self.port = 3306
             elif self.db_type == "oracle":
                 self.port = 1521
-            else:
+            elif self.db_type == "postgres":
                 self.port = 5432
+            else:
+                self.port = None
 
 
 @router.post("/connect")
@@ -215,13 +227,13 @@ def connect_db(payload: DBConnectRequest):
                     password=payload.password,
                     sslmode=payload.sslmode,
                 )
-                
+
                 # Test connection if requested
                 if payload.test_connection:
                     success, message = _connection_manager.test_connection(params, timeout=10)
                     if not success:
                         raise HTTPException(status_code=400, detail=message)
-                    
+
                 # Get SQLAlchemy URL
                 url = _connection_manager.parser.to_sqlalchemy_url(params)
             except ConnectionStringError as e:
@@ -235,7 +247,7 @@ def connect_db(payload: DBConnectRequest):
                 url = None
         else:
             url = None
-        
+
         # Fallback to original logic if URL not set
         if url is None:
             url = build_database_url(
@@ -248,6 +260,13 @@ def connect_db(payload: DBConnectRequest):
                 password=payload.password,
                 sslmode=payload.sslmode,
             )
+        
+
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("CONNECT_DB resolved SQLAlchemy URL (masked) = %s", url.replace(payload.password or "", "***"))
+
+
         set_database_url(url)
         set_database_source(
             attach_mode="CONNECTION",
