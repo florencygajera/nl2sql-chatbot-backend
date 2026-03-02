@@ -222,13 +222,7 @@ def connect_db(payload: DBConnectRequest):
                 # Parse parameters (validation only, no connection)
                 params = _connection_manager.parse_and_validate(
                     connection_string=payload.connection_string,
-                    db_type=payload.db_type,
-                    host=payload.host,
-                    port=payload.port,
-                    database=payload.database,
-                    username=payload.username,
-                    password=payload.password,
-                    sslmode=payload.sslmode,
+                    db_type=payload.db_type
                 )
                 # Build SQLAlchemy URL (no connection)
                 url = _connection_manager.parser.to_sqlalchemy_url(params)

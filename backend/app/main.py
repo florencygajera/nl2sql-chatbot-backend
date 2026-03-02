@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 from app.core.config import get_settings
+from app.core.middleware import PerformanceMonitoringMiddleware
 
 settings = get_settings()
 
@@ -35,13 +36,23 @@ def create_app() -> FastAPI:
         description=(
             "A production-ready Natural Language to SQL chatbot backend.\n\n"
             "Users type plain-English questions about an employee database and "
-            "receive SQL queries and/or structured results."
+            "receive SQL queries and/or structured results.\n\n"
+            "## Performance Optimizations\n"
+            "- Async LLM calls with connection pooling\n"
+            "- Schema caching with TTL\n"
+            "- Request performance monitoring\n"
+            "- Response caching for identical prompts"
         ),
-        version="1.0.0",
+        version="1.1.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
+
+    # ── Performance Monitoring ────────────────────────────────────────────────
+    if settings.ENABLE_PERFORMANCE_MONITORING:
+        application.add_middleware(PerformanceMonitoringMiddleware)
+        logger.info("Performance monitoring middleware enabled")
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     application.add_middleware(

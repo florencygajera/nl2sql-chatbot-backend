@@ -14,6 +14,8 @@ from app.api.schemas import (
     HealthResponse,
 )
 from app.core.config import get_settings
+from app.core.middleware import get_monitor
+from app.db.schema_cache import get_schema_cache
 from app.db.session import ping_database, SessionLocal, set_database_url, reset_database_url, set_database_source, active_db_info
 from app.services.chat_service import handle_chat
 from app.services.db_session import get_session, cleanup_expired
@@ -139,3 +141,39 @@ async def chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred: {exc}",
         ) from exc
+
+
+# ── Performance Monitoring Endpoints ─────────────────────────────────────────
+
+@router.get("/metrics", tags=["Monitoring"])
+def get_metrics(window_seconds: int = 300) -> dict:
+    """Get application performance metrics."""
+    if not settings.ENABLE_PERFORMANCE_MONITORING:
+        return {"error": "Performance monitoring is disabled"}
+    
+    monitor = get_monitor()
+    return monitor.get_summary(window_seconds=window_seconds)
+
+
+@router.get("/metrics/schema-cache", tags=["Monitoring"])
+def get_schema_cache_metrics() -> dict:
+    """Get schema cache statistics."""
+    if not settings.ENABLE_SCHEMA_CACHE:
+        return {"error": "Schema caching is disabled"}
+    
+    cache = get_schema_cache()
+    return cache.get_metrics()
+
+
+@router.post("/metrics/clear-cache", tags=["Monitoring"])
+def clear_caches() -> dict:
+    """Clear all caches (schema and LLM)."""
+    cache = get_schema_cache()
+    cache.invalidate_all()
+    
+    from app.llm.async_ollama_client import get_ollama_client
+    client = get_ollama_client()
+    if client:
+        client.clear_cache()
+    
+    return {"message": "All caches cleared"}

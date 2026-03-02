@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     MAX_ROW_LIMIT: int = 500
 
     # ── DB sessions (dynamic attach) ─────────────────────────────────────────
-    DB_SESSION_TTL_SECONDS: int = 900  # 15 minutes
+    DB_SESSION_TTL_SECONDS: int = 604800  # 7 days (essentially until refresh)
 
     # ── App ───────────────────────────────────────────────────────────────────
     APP_NAME: str = "NL2SQL Chatbot"
@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 10
     DB_POOL_TIMEOUT: int = 30
     DB_POOL_RECYCLE: int = 1800
+
+    # ── Performance / Caching ───────────────────────────────────────────────────
+    ENABLE_SCHEMA_CACHE: bool = True
+    SCHEMA_CACHE_TTL_SECONDS: int = 300  # 5 minutes
+    ENABLE_LLM_CACHE: bool = True
+    LLM_CACHE_TTL_SECONDS: int = 600  # 10 minutes
+    LLM_MAX_CONNECTIONS: int = 10
+    LLM_TIMEOUT_SECONDS: int = 120
+    ENABLE_PERFORMANCE_MONITORING: bool = True
 
 
 @lru_cache

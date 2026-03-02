@@ -156,3 +156,18 @@ Database Schema:
 {schema}
 
 Question: {user_message}""".strip()
+
+
+# Exports for optimized service
+__all__ = [
+    "generate_sql",
+    "_normalize_llm_sql",
+    "_build_mssql_prompt",
+    "_build_postgres_prompt",
+    "_build_mysql_prompt",
+    "_build_sqlite_prompt",
+    "_build_generic_prompt",
+]
+
+# Alias for backward compatibility with optimized service
+generate_sql_sync = generate_sql
