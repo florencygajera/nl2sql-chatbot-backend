@@ -3,29 +3,18 @@ Direct pyodbc connection test.
 """
 
 import pyodbc
-import sys
 
-# ==========================================
-# EDIT THESE VALUES FOR YOUR CONNECTION
-# ==========================================
-SERVER = "YOUR_SERVER_HERE"   # <-- REPLACE with your actual server (IP or hostname)
-PORT = "2408"                 # Your custom port
+# Actual server details
+SERVER = "6gd6btjtnbtux3fhcs6psyufz1ec6gyh3i8hfmkpcmhwdtvwuozaxu8uoptlcsk.printftech.com"
+PORT = "2408"
 DATABASE = "DB_GramBook_v11.0"
 USERNAME = "Demo"
 PASSWORD = "sa@123"
 
-print(f"Testing connection to {SERVER}:{PORT}")
+print(f"Testing connection to {SERVER},{PORT}")
 print("=" * 60)
 
-if SERVER == "YOUR_SERVER_HERE":
-    print("ERROR: Please edit this file and replace 'YOUR_SERVER_HERE' with your actual server address")
-    print("\nExample formats:")
-    print("  SERVER = '192.168.1.100'")
-    print("  SERVER = 'localhost'")
-    print("  SERVER = 'sql.example.com'")
-    sys.exit(1)
-
-# Build connection string
+# Build connection string - using ODBC Driver 17
 conn_str = (
     f"DRIVER={{ODBC Driver 17 for SQL Server}};"
     f"SERVER={SERVER},{PORT};"
