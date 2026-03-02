@@ -556,37 +556,39 @@ class UniversalConnectionParser:
             return self._build_generic_url(params, dialect)
 
     def _build_mssql_url(self, params: ConnectionParams) -> str:
-        """Build MSSQL SQLAlchemy URL with proper TLS/encryption settings."""
+        """Build MSSQL SQLAlchemy URL using raw ODBC connection string.
+        
+        Uses the ?odbc_connect= approach which passes the ODBC connection string
+        directly to pyodbc. This is MUCH faster than the URL-component approach 
+        because pyodbc handles the connection natively instead of SQLAlchemy 
+        reconstructing the ODBC string (which can cause timeouts on remote servers).
+        """
         host_part = params.host or "localhost"
         if params.port:
             host_part = f"{host_part},{params.port}"
 
-        database = quote_plus(params.database or "")
-
-        # CRITICAL: Use Encrypt=no by default to avoid prelogin handshake failures
-        # on servers that don't support TLS or have self-signed certs.
-        # Only encrypt if explicitly requested AND TrustServerCertificate is set.
+        database = params.database or ""
         encrypt = "yes" if params.encrypt else "no"
         trust = "yes" if params.trust_server_certificate else "no"
 
+        # Build raw ODBC connection string
+        odbc_parts = [
+            "DRIVER={ODBC Driver 17 for SQL Server}",
+            f"SERVER={host_part}",
+            f"DATABASE={database}",
+            f"Encrypt={encrypt}",
+            f"TrustServerCertificate={trust}",
+            "Connection Timeout=60",
+        ]
+
         if params.integrated_security:
-            return (
-                f"mssql+pyodbc://{host_part}/{database}"
-                f"?driver=ODBC+Driver+17+for+SQL+Server"
-                f"&Encrypt={encrypt}"
-                f"&TrustServerCertificate={trust}"
-                f"&Trusted_Connection=yes"
-            )
+            odbc_parts.append("Trusted_Connection=yes")
+        else:
+            odbc_parts.append(f"UID={params.username or ''}")
+            odbc_parts.append(f"PWD={params.password or ''}")
 
-        username = quote_plus(params.username or "")
-        password = quote_plus(params.password or "")
-
-        return (
-            f"mssql+pyodbc://{username}:{password}@{host_part}/{database}"
-            f"?driver=ODBC+Driver+17+for+SQL+Server"
-            f"&Encrypt={encrypt}"
-            f"&TrustServerCertificate={trust}"
-        )
+        odbc_str = ";".join(odbc_parts) + ";"
+        return f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
 
     def _build_postgresql_url(self, params: ConnectionParams) -> str:
         username = quote_plus(params.username or "")

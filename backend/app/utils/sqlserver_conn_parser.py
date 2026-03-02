@@ -114,7 +114,8 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
         parsed["username"] = None
         parsed["password"] = None
 
-    # Build SQLAlchemy URL
+    # Build SQLAlchemy URL using raw ODBC connection string (?odbc_connect= approach)
+    # This is MUCH faster than URL-component approach for remote servers.
     if not parsed["host"]:
         raise ValueError("Host is required. Could not find 'Data Source' or 'Server' in connection string.")
 
@@ -125,25 +126,25 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
     if parsed["port"]:
         host_part = f"{host_part},{parsed['port']}"
 
-    database = urllib.parse.quote_plus(parsed["database"])
-
-    # CRITICAL FIX: Default Encrypt to "no" to prevent prelogin handshake failures.
-    # The original code defaulted to Encrypt=yes, which causes:
-    #   [08001] Client unable to establish connection because an error was
-    #   encountered during handshakes before login
-    # on servers that don't support TLS or have self-signed certs.
     encrypt = "yes" if parsed.get("Encrypt", False) else "no"
     tsc = "yes" if parsed.get("TrustServerCertificate", True) else "no"
 
-    # Handle Integrated Security / Windows Authentication (supported by pyodbc)
+    # Build raw ODBC connection string
+    odbc_parts = [
+        "DRIVER={ODBC Driver 17 for SQL Server}",
+        f"SERVER={host_part}",
+        f"DATABASE={parsed['database']}",
+        f"Encrypt={encrypt}",
+        f"TrustServerCertificate={tsc}",
+        "Connection Timeout=60",
+    ]
+
+    # Handle Integrated Security / Windows Authentication
     if parsed["Integrated_Security"]:
-        return parsed, (
-            f"mssql+pyodbc://{host_part}/{database}"
-            f"?driver=ODBC+Driver+17+for+SQL+Server"
-            f"&Encrypt={encrypt}"
-            f"&TrustServerCertificate={tsc}"
-            f"&Trusted_Connection=yes"
-        )
+        odbc_parts.append("Trusted_Connection=yes")
+        odbc_str = ";".join(odbc_parts) + ";"
+        sqlalchemy_url = f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote_plus(odbc_str)}"
+        return parsed, sqlalchemy_url
 
     # Require username and password for SQL Authentication
     if not parsed["username"] or not parsed["password"]:
@@ -151,16 +152,10 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
             "Username and Password are required for SQL Server connection when Integrated Security is false."
         )
 
-    # URL-encode special characters in username and password
-    username = urllib.parse.quote_plus(parsed["username"])
-    password = urllib.parse.quote_plus(parsed["password"])
-
-    sqlalchemy_url = (
-        f"mssql+pyodbc://{username}:{password}@{host_part}/{database}"
-        f"?driver=ODBC+Driver+17+for+SQL+Server"
-        f"&Encrypt={encrypt}"
-        f"&TrustServerCertificate={tsc}"
-    )
+    odbc_parts.append(f"UID={parsed['username']}")
+    odbc_parts.append(f"PWD={parsed['password']}")
+    odbc_str = ";".join(odbc_parts) + ";"
+    sqlalchemy_url = f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote_plus(odbc_str)}"
 
     return parsed, sqlalchemy_url
 

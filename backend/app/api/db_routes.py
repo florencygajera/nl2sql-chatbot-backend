@@ -214,11 +214,12 @@ class DBConnectRequest(BaseModel):
 @router.post("/connect")
 def connect_db(payload: DBConnectRequest):
     try:
-        # First, validate and optionally test the connection
+        url = None
+
+        # Step 1: Parse connection string into SQLAlchemy URL (no connection yet)
         if payload.connection_string:
-            # Try universal connector first
             try:
-                # Parse parameters
+                # Parse parameters (validation only, no connection)
                 params = _connection_manager.parse_and_validate(
                     connection_string=payload.connection_string,
                     db_type=payload.db_type,
@@ -229,28 +230,15 @@ def connect_db(payload: DBConnectRequest):
                     password=payload.password,
                     sslmode=payload.sslmode,
                 )
-
-                # Test connection if requested
-                if payload.test_connection:
-                    success, message = _connection_manager.test_connection(params, timeout=10)
-                    if not success:
-                        raise HTTPException(status_code=400, detail=message)
-
-                # Get SQLAlchemy URL
+                # Build SQLAlchemy URL (no connection)
                 url = _connection_manager.parser.to_sqlalchemy_url(params)
             except ConnectionStringError as e:
-                if payload.test_connection:
-                    raise HTTPException(status_code=400, detail=str(e))
-                # If not testing, continue with original logic
-                url = None
+                raise HTTPException(status_code=400, detail=str(e))
             except Exception as e:
-                if payload.test_connection:
-                    raise HTTPException(status_code=400, detail=str(e))
+                # Fall through to legacy parser
                 url = None
-        else:
-            url = None
 
-        # Fallback to original logic if URL not set
+        # Fallback to legacy URL builder if universal parser didn't produce a URL
         if url is None:
             url = build_database_url(
                 connection_string=payload.connection_string,
@@ -262,13 +250,13 @@ def connect_db(payload: DBConnectRequest):
                 password=payload.password,
                 sslmode=payload.sslmode,
             )
-        
 
         import logging
         logger = logging.getLogger(__name__)
         logger.warning("CONNECT_DB resolved SQLAlchemy URL (masked) = %s", url.replace(payload.password or "", "***"))
 
-
+        # Step 2: set_database_url does ONE connection test internally (SELECT 1)
+        # This is the ONLY place we actually connect to the remote DB.
         set_database_url(url)
         set_database_source(
             attach_mode="CONNECTION",
@@ -282,6 +270,8 @@ def connect_db(payload: DBConnectRequest):
                 "used_connection_string": bool(payload.connection_string),
             },
         )
+
+        # Step 3: Fetch schema (reuses the already-connected engine)
         schema = get_schema_summary()
         sid = create_session(db_url=url, source=active_db_info.get('source', {}))
         reset_database_url()
