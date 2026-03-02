@@ -21,6 +21,10 @@ DEFAULT_DATABASE_URL = settings.DATABASE_URL
 def _mask_db_url(url: str) -> str:
     """Hide passwords in URLs for safe logging / status responses."""
     try:
+        import re
+        # Handle odbc_connect URLs
+        if "odbc_connect" in url:
+            return re.sub(r'PWD=[^;%]*', 'PWD=***', url)
         if "://" not in url or "@" not in url:
             return url
         scheme, rest = url.split("://", 1)
@@ -91,10 +95,13 @@ def create_app_engine(url: str):
             "options": "-c statement_timeout=30000"
         }
 
-    # MSSQL (pyodbc) connect args
+    # MSSQL: if using odbc_connect URL, do NOT pass connect_args —
+    # the Connection Timeout is already embedded in the ODBC string.
+    # Passing connect_args overrides it and causes 30s timeouts.
     elif dialect == "mssql":
-        # pyodbc uses "timeout" (seconds), NOT "connect_timeout"
-        kwargs["connect_args"] = {"timeout": 30}
+        if "odbc_connect" not in url:
+            kwargs["connect_args"] = {"timeout": 30}
+        # else: no connect_args needed; ODBC string has Connection Timeout=60
 
     # MySQL and others
     else:
@@ -131,12 +138,13 @@ def _test_engine_connect(new_url: str) -> None:
 
     if new_url.startswith("sqlite"):
         test_kwargs["connect_args"] = {"check_same_thread": False}
-    elif dialect == "mssql":
+    elif dialect == "mssql" and "odbc_connect" not in new_url:
         test_kwargs["connect_args"] = {"timeout": 30}
     elif dialect == "postgresql":
         test_kwargs["connect_args"] = {"connect_timeout": 10}
-    else:
+    elif dialect != "mssql":
         test_kwargs["connect_args"] = {"connect_timeout": 10}
+    # mssql with odbc_connect: no connect_args — timeout is in ODBC string
 
     test_engine = create_engine(new_url, **test_kwargs)
     try:
@@ -156,12 +164,13 @@ def set_database_url(new_url: str) -> None:
 
     if new_url.startswith("sqlite"):
         test_kwargs["connect_args"] = {"check_same_thread": False}
-    elif dialect == "mssql":
+    elif dialect == "mssql" and "odbc_connect" not in new_url:
         test_kwargs["connect_args"] = {"timeout": 30}
     elif dialect == "postgresql":
         test_kwargs["connect_args"] = {"connect_timeout": 10}
-    else:
+    elif dialect != "mssql":
         test_kwargs["connect_args"] = {"connect_timeout": 10}
+    # mssql with odbc_connect: no connect_args — timeout is in ODBC string
 
     test_engine = create_engine(new_url, **test_kwargs)
     try:

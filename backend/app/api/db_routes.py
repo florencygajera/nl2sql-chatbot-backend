@@ -137,20 +137,20 @@ def build_database_url(
         return url
 
     if db_type == "mssql":
-        # Use ODBC Driver 17 for SQL Server
-        # IMPORTANT: Encrypt=yes prevents prelogin handshake failures on servers
-        # that don't support TLS or have self-signed certificates.
-        u = urllib.parse.quote_plus(username or "")
-        p = urllib.parse.quote_plus(password or "")
-        db = urllib.parse.quote_plus(database or "")
-
-        url = (
-            f"mssql+pyodbc://{u}:{p}@{host},{port}/{db}"
-            f"?driver=ODBC+Driver+17+for+SQL+Server"
-            f"&Encrypt=yes"
-            f"&TrustServerCertificate=yes"
-        )
-        return url
+        # Use raw ODBC connection string via ?odbc_connect= for fast, reliable connections
+        host_port = f"{host},{port}" if port else host
+        odbc_parts = [
+            "DRIVER={ODBC Driver 17 for SQL Server}",
+            f"SERVER={host_port}",
+            f"DATABASE={database or ''}",
+            f"UID={username or ''}",
+            f"PWD={password or ''}",
+            "Encrypt=no",
+            "TrustServerCertificate=yes",
+            "Connection Timeout=60",
+        ]
+        odbc_str = ";".join(odbc_parts) + ";"
+        return f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote_plus(odbc_str)}"
 
     if db_type == "oracle":
         url = f"oracle+oracledb://{username}:{password}@{host}:{port}/?service_name={database}"
