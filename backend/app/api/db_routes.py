@@ -28,14 +28,13 @@ router = APIRouter(prefix="/db", tags=["db"])
 UPLOAD_DIR = Path("uploaded_db_files")
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
 
-DbType = Literal["postgres", "mysql", "sqlite"]
+DbType = Literal["postgres", "mysql", "sqlite", "mssql"]
 
 AllowedUploadExt = {".sql", ".dump", ".backup", ".tar", ".gz", ".sqlite", ".db", ".bak"}
 
 
-# ---------------------------
-# Helpers
-# ---------------------------
+from app.utils.sqlserver_conn_parser import parse_sqlserver_connection_string as _parse_mssql_conn_str
+
 
 def build_database_url(
     connection_string: str | None,
@@ -47,6 +46,25 @@ def build_database_url(
     password: str | None,
     sslmode: str | None = None,
 ) -> str:
+    # If connection_string is provided and db_type is mssql, parse and convert it
+    if connection_string and db_type == "mssql":
+        # Try to detect if it's a SQL Server format (has Data Source, Initial Catalog, etc.)
+        conn_str_lower = connection_string.lower()
+        if "data source" in conn_str_lower or "initial catalog" in conn_str_lower or "server" in conn_str_lower:
+            # Parse the SQL Server connection string using the utility function
+            try:
+                parsed, sqlalchemy_url = _parse_mssql_conn_str(connection_string)
+                return sqlalchemy_url
+            except ValueError as e:
+                raise ValueError(f"Invalid SQL Server connection string: {e}")
+        
+        # If it's already a SQLAlchemy URL, use it directly
+        if "://" in connection_string:
+            return connection_string
+            
+        # Treat as raw connection string
+        return connection_string
+    
     if connection_string:
         return connection_string
 
@@ -70,6 +88,11 @@ def build_database_url(
 
     if db_type == "mysql":
         url = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}"
+        return url
+
+    if db_type == "mssql":
+        trust_cert = "yes"  # Default to yes for convenience
+        url = f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}"
         return url
 
     raise ValueError("Unsupported db_type")
@@ -109,6 +132,17 @@ class DBConnectRequest(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     sslmode: Optional[str] = Field(default=None, description="disable|require|verify-ca|verify-full")
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Set default port based on db_type
+        if self.port is None:
+            if self.db_type == "mssql":
+                self.port = 1433
+            elif self.db_type == "mysql":
+                self.port = 3306
+            else:
+                self.port = 5432
 
 
 @router.post("/connect")
