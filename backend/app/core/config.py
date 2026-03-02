@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     DEFAULT_ROW_LIMIT: int = 50
     MAX_ROW_LIMIT: int = 500
 
+    # ── DB sessions (dynamic attach) ─────────────────────────────────────────
+    DB_SESSION_TTL_SECONDS: int = 900  # 15 minutes
+
     # ── App ───────────────────────────────────────────────────────────────────
     APP_NAME: str = "NL2SQL Chatbot"
     DEBUG: bool = False
@@ -46,5 +49,5 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 
-# Call once at startup to ensure .env is loaded
+
 _settings = get_settings()

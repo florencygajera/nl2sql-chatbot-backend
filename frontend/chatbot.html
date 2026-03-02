@@ -12,7 +12,6 @@
     rel="stylesheet" />
 
   <style>
-    /* ── Reset & Variables ─────────────────────────────────────────────── */
     *,
     *::before,
     *::after {
@@ -53,7 +52,6 @@
       overflow: hidden;
     }
 
-    /* ── Grid Background ───────────────────────────────────────────────── */
     body::before {
       content: '';
       position: fixed;
@@ -66,7 +64,6 @@
       z-index: 0;
     }
 
-    /* ── Layout ────────────────────────────────────────────────────────── */
     .app {
       position: relative;
       z-index: 1;
@@ -77,7 +74,6 @@
       margin: 0 auto;
     }
 
-    /* ── Header ────────────────────────────────────────────────────────── */
     header {
       display: flex;
       align-items: center;
@@ -190,7 +186,6 @@
       border-color: var(--accent);
     }
 
-    /* ── Add SQL (+) Button ─────────────────────────────────────────────── */
     .add-sql-btn {
       width: 36px;
       height: 36px;
@@ -220,7 +215,6 @@
       transform: scale(0.96);
     }
 
-    /* ── Chat Area ─────────────────────────────────────────────────────── */
     .chat-area {
       overflow-y: auto;
       padding: 24px 28px;
@@ -243,7 +237,6 @@
       border-radius: 4px;
     }
 
-    /* ── Welcome ───────────────────────────────────────────────────────── */
     .welcome {
       text-align: center;
       padding: 48px 24px;
@@ -299,7 +292,6 @@
       transform: translateY(-1px);
     }
 
-    /* ── Messages ──────────────────────────────────────────────────────── */
     .message {
       display: flex;
       gap: 14px;
@@ -386,7 +378,6 @@
       text-align: right;
     }
 
-    /* ── Mode Badge ────────────────────────────────────────────────────── */
     .mode-badge {
       display: inline-flex;
       align-items: center;
@@ -412,19 +403,186 @@
       border: 1px solid rgba(79, 195, 247, 0.25);
     }
 
-    .mode-badge.clarify {
-      background: rgba(255, 209, 102, 0.12);
-      color: var(--yellow);
-      border: 1px solid rgba(255, 209, 102, 0.25);
-    }
-
     .mode-badge.error {
       background: rgba(255, 95, 109, 0.12);
       color: var(--red);
       border: 1px solid rgba(255, 95, 109, 0.25);
     }
 
-    /* ── Input Area ────────────────────────────────────────────────────── */
+    .sql-block {
+      background: #050810;
+      border: 1px solid var(--border2);
+      border-left: 3px solid var(--accent);
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 12px 0;
+    }
+
+    .sql-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      background: rgba(0, 212, 170, 0.06);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sql-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .copy-btn {
+      background: none;
+      border: 1px solid var(--border2);
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .copy-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .sql-code {
+      padding: 14px 16px;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      color: #b8d4f0;
+      line-height: 1.7;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .results-block {
+      margin: 12px 0;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .results-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .results-header-left {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      letter-spacing: 0.5px;
+    }
+
+    .row-count {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--accent);
+      background: var(--accent-dim);
+      padding: 2px 8px;
+      border-radius: 100px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead tr {
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border2);
+    }
+
+    th {
+      padding: 10px 14px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--accent);
+      text-align: left;
+      letter-spacing: 0.8px;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 9px 14px;
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .explanation {
+      font-size: 13.5px;
+      color: var(--text-dim);
+      line-height: 1.6;
+      padding: 10px 0 4px;
+      border-top: 1px solid var(--border);
+      margin-top: 12px;
+    }
+
+    .typing-indicator {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      padding: 14px 18px;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.3;
+      animation: dotPulse 1.4s ease-in-out infinite;
+    }
+
+    .dot:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .dot:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes dotPulse {
+
+      0%,
+      100% {
+        opacity: 0.3;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 1;
+        transform: scale(1.3);
+      }
+    }
+
     .input-area {
       padding: 20px 28px 28px;
       border-top: 1px solid var(--border);
@@ -636,7 +794,6 @@
 <body>
   <div class="app">
 
-    <!-- ── Header ── -->
     <header>
       <div class="logo">
         <div class="logo-icon">Q/</div>
@@ -645,7 +802,7 @@
 
       <div class="header-right">
         <button class="icon-btn" id="addConnBtn" title="Connect Database">🔌</button>
-        <button class="add-sql-btn" id="addSqlBtn" title="Add .sql file">+</button>
+        <button class="add-sql-btn" id="addSqlBtn" title="Add database file">+</button>
         <input id="sqlFileInput" type="file" accept=".sql,.sqlite,.db,.gz,.dump,.backup,.tar" style="display:none" />
 
         <input class="backend-url-input" id="backendUrl" type="text" value="http://localhost:8000"
@@ -655,27 +812,23 @@
       </div>
     </header>
 
-    <!-- ── Chat ── -->
     <div class="chat-area" id="chatArea">
       <div class="welcome" id="welcome">
         <div class="welcome-icon">🧠</div>
         <h2>Ask your database anything</h2>
-        <p>Type a question in plain English. QueryMind converts it to SQL and fetches real results.</p>
+        <p>Upload a DB or connect using host/port. Then ask questions in English.</p>
         <div class="example-chips">
-          <div class="chip" onclick="sendChip(this)">Total salary of all employees</div>
-          <div class="chip" onclick="sendChip(this)">Department-wise salary totals</div>
-          <div class="chip" onclick="sendChip(this)">Top 5 highest paid in IT</div>
-          <div class="chip" onclick="sendChip(this)">Employees hired after 2020</div>
-          <div class="chip" onclick="sendChip(this)">Average salary by job title</div>
-          <div class="chip" onclick="sendChip(this)">Give me only the SQL for headcount per department</div>
+          <div class="chip" onclick="sendChip(this)">Show top 10 users</div>
+          <div class="chip" onclick="sendChip(this)">Count total records in User_Master</div>
+          <div class="chip" onclick="sendChip(this)">Give me dealers list</div>
+          <div class="chip" onclick="sendChip(this)">Latest 20 tax requests</div>
         </div>
       </div>
     </div>
 
-    <!-- ── Input ── -->
     <div class="input-area">
       <div class="input-wrapper">
-        <textarea id="userInput" rows="1" placeholder="Ask something about your employee data…"></textarea>
+        <textarea id="userInput" rows="1" placeholder="Ask something about your data…"></textarea>
         <button class="send-btn" id="sendBtn" onclick="sendMessage()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
             stroke-linejoin="round">
@@ -684,13 +837,11 @@
           </svg>
         </button>
       </div>
-      <div class="input-hint">Enter to send · Shift+Enter for new line · Tip: say "only sql" or "only answer" to control
-        output</div>
+      <div class="input-hint">Enter to send · Shift+Enter for new line</div>
     </div>
 
   </div>
 
-  <!-- ── Connection Modal ── -->
   <div class="modal-overlay" id="connModal">
     <div class="modal">
       <div class="modal-header">
@@ -710,26 +861,21 @@
       <div id="connStandardFields">
         <div class="form-row">
           <div class="form-group">
-            <label>Server Name</label>
-            <input type="text" class="form-control" id="connServer" placeholder="myserver" />
+            <label>Host / IP Address</label>
+            <input type="text" class="form-control" id="connHost" value="localhost" />
           </div>
           <div class="form-group" style="flex: 0.5;">
             <label>Port</label>
             <input type="number" class="form-control" id="connPort" value="5432" />
           </div>
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Host / IP Address</label>
-            <input type="text" class="form-control" id="connHost" value="localhost" />
-          </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-            <label>Database</label>
-            <input type="text" class="form-control" id="connDb" placeholder="mydb" />
-          </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Database</label>
+          <input type="text" class="form-control" id="connDb" placeholder="mydb" />
         </div>
+      </div>
+
         <div class="form-row">
           <div class="form-group">
             <label>Username</label>
@@ -757,7 +903,6 @@
   </div>
 
   <script>
-    // ── Config ──────────────────────────────────────────────────────────────
     const getBackendUrl = () => document.getElementById('backendUrl').value.replace(/\/$/, '');
 
     const addSqlBtn = document.getElementById('addSqlBtn');
@@ -765,10 +910,9 @@
     const connModal = document.getElementById('connModal');
     const addConnBtn = document.getElementById('addConnBtn');
 
-    let uploadedSqlText = "";
-    let uploadedSqlName = "";
+    // ✅ This is the key: keep the active DB session id here
+    let dbSessionId = null;
 
-    // ── Connection Modal Handlers ──
     addConnBtn.addEventListener('click', () => {
       connModal.style.display = 'flex';
     });
@@ -780,54 +924,47 @@
     function toggleConnFields() {
       const type = document.getElementById('connType').value;
       const stdFields = document.getElementById('connStandardFields');
+
       if (type === 'sqlite') {
-        stdFields.style.opacity = '0.4';
-        stdFields.style.pointerEvents = 'none';
-        document.getElementById('connDb').placeholder = "Path to database file (.db or .sqlite)";
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ds.style.opacity = '1';
+        stdFields.style.opacity = '0.5';
         document.getElementById('connHost').disabled = true;
         document.getElementById('connPort').disabled = true;
         document.getElementById('connUser').disabled = true;
         document.getElementById('connPass').disabled = true;
-        document.getElementById('connDb').disabled = false;
-        stdFields.querySelector('.form-row:first-child').style.display = 'none';
-        stdFields.querySelector('.form-row:nth-child(3)').style.display = 'none';
+        document.getElementById('connDb').placeholder = "Path to .db or .sqlite file";
       } else {
         stdFields.style.opacity = '1';
-        stdFields.style.pointerEvents = 'auto';
         document.getElementById('connHost').disabled = false;
         document.getElementById('connPort').disabled = false;
         document.getElementById('connUser').disabled = false;
         document.getElementById('connPass').disabled = false;
-        document.getElementById('connDb').disabled = false;
-        stdFields.querySelector('.form-row:first-child').style.display = 'flex';
-        stdFields.querySelector('.form-row:nth-child(3)').style.display = 'flex';
+        document.getElementById('connDb').placeholder = "mydb";
       }
     }
 
     async function submitConnection() {
       const payload = { db_type: document.getElementById('connType').value };
-
       const connStr = document.getElementById('connString').value.trim();
+
       if (connStr) {
         payload.connection_string = connStr;
       } else {
         if (payload.db_type !== 'sqlite') {
-          payload.host = document.getElementById('connHost').value;
-          payload.port = parseInt(document.getElementById('connPort').value) || (payload.db_type === 'postgres' ? 5432 : 3306);
-          payload.database = document.getElementById('connDb').value;
-          payload.username = document.getElementById('connUser').value;
+          payload.host = document.getElementById('connHost').value.trim();
+          payload.port = parseInt(document.getElementById('connPort').value, 10) || (payload.db_type === 'postgres' ? 5432 : 3306);
+          payload.database = document.getElementById('connDb').value.trim();
+          payload.username = document.getElementById('connUser').value.trim();
           payload.password = document.getElementById('connPass').value;
           const ssl = document.getElementById('connSsl').value.trim();
           if (ssl) payload.sslmode = ssl;
         } else {
-          payload.database = document.getElementById('connDb').value;
+          payload.database = document.getElementById('connDb').value.trim();
         }
       }
 
       closeConnModal();
       hideWelcome();
-      appendBotResponse({ type: "CHAT", answer: `🔌 Connecting to ${payload.db_type} database...` });
+      appendBotResponse({ type: "CHAT", answer: `🔌 Connecting to ${payload.db_type}...` });
 
       try {
         const res = await fetch(`${getBackendUrl()}/api/v1/db/source/connect`, {
@@ -839,7 +976,18 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
 
-        appendBotResponse({ type: "CHAT", answer: `✅ Database connected successfully!\n\nURL: ${data.database_url}` });
+        // ✅ store session id
+        dbSessionId = data.db_session_id || null;
+
+        appendBotResponse({
+          type: "CHAT",
+          answer:
+            `✅ Connected!\n\n` +
+            `db_session_id: ${dbSessionId || '(none)'}\n` +
+            `URL: ${data.database_url || ''}\n` +
+            `Schema chars: ${data.schema ? data.schema.length : 0}`
+        });
+
         checkHealth();
       } catch (err) {
         appendBotError(err.message || "Failed to connect to database");
@@ -853,8 +1001,6 @@
 
     sqlFileInput.addEventListener('change', async () => {
       const file = sqlFileInput.files?.[0];
-
-      // ✅ Guard: prevents undefined uploads
       if (!file || !(file instanceof File)) {
         appendBotError("No valid file selected.");
         return;
@@ -867,12 +1013,10 @@
         return;
       }
 
-      uploadedSqlName = file.name;
-
       hideWelcome();
       appendBotResponse({
         type: "CHAT",
-        answer: `📄 Selected file: "${uploadedSqlName}" (${(file.size / 1024).toFixed(1)} KB). Uploading to backend...`
+        answer: `📄 Selected file: "${file.name}" (${(file.size / 1024).toFixed(1)} KB). Uploading...`
       });
 
       try {
@@ -893,14 +1037,19 @@
 
         const out = await res.json();
 
-        // ✅ FIX: backend returns database_name/database_url/db_schema, not filename/bytes
+        // ✅ store session id
+        dbSessionId = out.db_session_id || null;
+
         appendBotResponse({
           type: "CHAT",
           answer:
-            `✅ Uploaded & attached successfully!\n\n` +
-            `DB: ${out.database_name}\n` +
-            `URL: ${out.database_url}\n` +
-            `Schema length: ${out.db_schema ? out.db_schema.length : 0} chars`
+            `✅ Uploaded & attached!\n\n` +
+            `db_session_id: ${dbSessionId || '(none)'}\n` +
+            `File: ${out.filename || file.name}\n` +
+            `Bytes: ${typeof out.bytes === 'number' ? out.bytes : file.size}\n` +
+            `DB Name: ${out.database_name || ''}\n` +
+            `URL: ${out.database_url || ''}\n` +
+            `Schema chars: ${out.db_schema ? out.db_schema.length : 0}`
         });
 
         checkHealth();
@@ -909,19 +1058,19 @@
       }
     });
 
-    // ── Health check ─────────────────────────────────────────────────────────
     async function checkHealth() {
       const dot = document.getElementById('statusDot');
       const label = document.getElementById('statusLabel');
+
       try {
         const r = await fetch(`${getBackendUrl()}/api/v1/health`, { signal: AbortSignal.timeout(4000) });
         const d = await r.json();
         if (d.status === 'ok') {
           dot.className = 'status-dot';
-          label.textContent = 'CONNECTED';
+          label.textContent = 'ONLINE';
         } else {
           dot.className = 'status-dot offline';
-          label.textContent = 'DB OFFLINE';
+          label.textContent = 'DEGRADED';
         }
       } catch {
         dot.className = 'status-dot offline';
@@ -933,7 +1082,6 @@
     setInterval(checkHealth, 10000);
     document.getElementById('backendUrl').addEventListener('change', checkHealth);
 
-    // ── Auto-resize textarea ──────────────────────────────────────────────────
     const ta = document.getElementById('userInput');
     ta.addEventListener('input', () => {
       ta.style.height = 'auto';
@@ -944,13 +1092,11 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
 
-    // ── Chips ─────────────────────────────────────────────────────────────────
     function sendChip(el) {
       ta.value = el.textContent;
       sendMessage();
     }
 
-    // ── Send ──────────────────────────────────────────────────────────────────
     async function sendMessage() {
       const text = ta.value.trim();
       if (!text) return;
@@ -964,11 +1110,13 @@
       const typingId = appendTyping();
 
       try {
-        const payload = { message: text };
+        const payload = {
+          message: text,
+          db_session_id: dbSessionId            
+        };
 
-        // Create abort controller for manual cancellation + timeout
         const controller = new AbortController();
-        const timeoutMs = 60000; // 60 second timeout - more reasonable for chatbot
+        const timeoutMs = 180000;
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
         const res = await fetch(`${getBackendUrl()}/api/v1/chat`, {
@@ -979,7 +1127,6 @@
         });
 
         clearTimeout(timeoutId);
-
         removeTyping(typingId);
 
         if (!res.ok) {
@@ -993,8 +1140,7 @@
 
       } catch (err) {
         removeTyping(typingId);
-        // Check if the request was aborted (timeout or manual cancel)
-        if (err.name === 'AbortError') {
+        if (err && err.name === 'AbortError') {
           appendBotError('Request timed out. Please try again or simplify your query.');
         } else {
           appendBotError(err?.message || 'Network error — is the backend running?');
@@ -1005,7 +1151,6 @@
       }
     }
 
-    // ── DOM Helpers ───────────────────────────────────────────────────────────
     function hideWelcome() {
       const w = document.getElementById('welcome');
       if (w) w.remove();
@@ -1075,7 +1220,6 @@
       scrollToBottom();
     }
 
-    // ── Response Renderer ─────────────────────────────────────────────────────
     function appendBotResponse(data) {
       const ca = document.getElementById('chatArea');
       const div = document.createElement('div');
@@ -1085,12 +1229,53 @@
 
       if (data.type === 'CHAT') {
         inner = `
-        <span class="mode-badge chat">💬 CHAT</span>
-        <div>${escHtml(data.answer)}</div>`;
+          <span class="mode-badge chat">💬 CHAT</span>
+          <div>${escHtml(data.answer)}</div>`;
+      } else if (data.type === 'DB') {
+        inner += `<span class="mode-badge db">⚡ DB</span>`;
+
+        if (data.sql) {
+          const sqlId = 'sql-' + Date.now();
+          inner += `
+            <div class="sql-block">
+              <div class="sql-header">
+                <div class="sql-header-left"><span>SQL QUERY</span></div>
+                <button class="copy-btn" onclick="copyText(${JSON.stringify(data.sql)})">Copy</button>
+              </div>
+              <div class="sql-code" id="${sqlId}">${escHtml(data.sql)}</div>
+            </div>`;
+          if (data.result && data.result.columns && data.result.columns.length > 0) {
+            const cols = data.result.columns.map(c => `<th>${escHtml(c)}</th>`).join('');
+            const rows = (data.result.rows || []).map(row =>
+              `<tr>${row.map(cell => `<td>${escHtml(cell === null ? 'NULL' : String(cell))}</td>`).join('')}</tr>`
+            ).join('');
+            inner += `
+              <div class="results-block">
+                <div class="results-header">
+                  <span class="results-header-left">📊 RESULTS</span>
+                  <span class="row-count">${data.result.row_count || 0} row(s)</span>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead><tr>${cols}</tr></thead>
+                    <tbody>${rows}</tbody>
+                  </table>
+                </div>`;
+          }
+
+          if (data.explanation) {
+            inner += `<div class="explanation">ℹ ${escHtml(data.explanation)}</div>`;
+          }
+
+          if (data.error) {
+            inner += `<div style="color:var(--red);font-family:var(--font-mono);font-size:12px;margin-top:10px;">⚠ ${escHtml(data.error)}</div>`;
+          }
+
+        }
       } else {
         inner = `
-        <span class="mode-badge db">📊 DB                        >
-                                                 a === "          ng" ? da           JSON.stringify(data, null, 2)}</div>`;
+          <span class="mode-badge db">🧾 RAW</span>
+          <pre style="white-space:pre-wrap;font-family:var(--font-mono);font-size:12px;">${escHtml(JSON.stringify(data, null, 2))}</pre>`;
       }
 
       div.innerHTML = `
@@ -1103,7 +1288,10 @@
       scrollToBottom();
     }
 
-    // ── HTML escape ───────────────────────────────────────────────────────────
+    async function copyText(text) {
+      try { await navigator.clipboard.writeText(text); } catch { }
+    }
+
     function escHtml(str) {
       if (str === null || str === undefined) return '';
       return String(str)

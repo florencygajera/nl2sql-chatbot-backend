@@ -19,6 +19,12 @@ class ChatRequest(BaseModel):
         examples=["Total salary paid to all employees"],
     )
 
+    db_session_id: str | None = Field(
+        default=None,
+        description="Temporary database session id returned by /db/source/connect or /db/source/upload.",
+        examples=["<db_session_id>"]
+    )
+
 
 # ── DB result sub-schema ──────────────────────────────────────────────────────
 

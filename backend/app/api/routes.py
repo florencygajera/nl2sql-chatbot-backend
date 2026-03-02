@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-
+from fastapi import APIRouter, HTTPException, status
 from app.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -16,8 +14,9 @@ from app.api.schemas import (
     HealthResponse,
 )
 from app.core.config import get_settings
-from app.db.session import get_db, ping_database
+from app.db.session import ping_database, SessionLocal, set_database_url, reset_database_url, set_database_source, active_db_info
 from app.services.chat_service import handle_chat
+from app.services.db_session import get_session, cleanup_expired
 from app.api.upload_sql import router as upload_sql_router
 from app.api.db_routes import router as db_router
 
@@ -31,7 +30,9 @@ router.include_router(upload_sql_router)
 _APP_VERSION = "1.0.0"
 
 
-# ─────────────────────────────────────── /health ───────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────
+# /health
+# ───────────────────────────────────────
 
 @router.get(
     "/health",
@@ -89,20 +90,49 @@ def health_check() -> HealthResponse:
 )
 async def chat(
     request: ChatRequest,
-    db: Session = Depends(get_db),
 ) -> dict:
     """
     Main endpoint: converts a natural-language question into SQL,
     executes it, and returns the result according to the detected mode.
 
-    **Mode detection:**
-    - Contains "sql" / "query" / "command only" → `QUERY_ONLY`
-    - Contains "only answer" → `ANSWER_ONLY`
-    - Otherwise → `QUERY_AND_ANSWER`
+    Dynamic DB behavior:
+    - If db_session_id is provided, it attaches that DB only for this request
+      and auto-detaches in finally.
     """
     try:
-        response = await handle_chat(message=request.message, db=db)
-        return response
+        # Optional: cleanup idle DB sessions (in-memory)
+        cleanup_expired(settings.DB_SESSION_TTL_SECONDS)
+
+        if request.db_session_id:
+            sess = get_session(request.db_session_id)
+            if not sess:
+                raise HTTPException(status_code=400, detail="DB session expired or invalid. Please upload/connect again.")
+
+            # Attach DB only for this request
+            set_database_url(sess.db_url)
+            set_database_source(
+                attach_mode="SESSION",
+                db_type=sess.source.get("db_type", "unknown"),
+                details=sess.source.get("details", {}),
+            )
+
+            db = SessionLocal()
+            try:
+                response = await handle_chat(message=request.message, db=db)
+                return response
+            finally:
+                db.close()
+                # Always detach back to env default
+                reset_database_url()
+        else:
+            # Fallback: use current default DB configured in environment
+            db = SessionLocal()
+            try:
+                response = await handle_chat(message=request.message, db=db)
+                return response
+            finally:
+                db.close()
+
     except Exception as exc:
         logger.exception("Unhandled error in /chat: %s", exc)
         raise HTTPException(

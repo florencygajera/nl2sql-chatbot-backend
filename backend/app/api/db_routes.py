@@ -12,6 +12,8 @@ from typing import Literal, Optional
 from fastapi import APIRouter, File, UploadFile, HTTPException
 from pydantic import BaseModel, Field
 
+from app.services.db_session import create_session
+
 from app.db.session import (
     set_database_url,
     set_database_source,
@@ -87,56 +89,11 @@ def _require_pg_tools() -> None:
         raise HTTPException(
             status_code=400,
             detail=(
-                "PostgreSQL client tools are required to import Postgres files. "
+                "PostgreSQL client tools are required to import .sql/.dump/.backup/.tar files. "
                 f"Missing: {', '.join(missing)}. "
                 "Install PostgreSQL client tools and ensure they are on PATH, or upload a .sqlite/.db file instead."
             ),
         )
-
-
-def _make_unique_db_name(base: str) -> str:
-    base = (base or "uploaded_db").strip().lower()
-    base = re.sub(r"[^a-z0-9_]+", "_", base)
-    base = re.sub(r"_+", "_", base).strip("_")
-    if not base:
-        base = "uploaded_db"
-    return f"{base}_{uuid.uuid4().hex[:8]}"
-
-
-def _is_sqlite_file(path: Path) -> bool:
-    # SQLite files start with: b"SQLite format 3\x00"
-    head = path.read_bytes()[:16]
-    return head.startswith(b"SQLite format 3\x00")
-
-
-def _looks_like_sql_file(path: Path) -> bool:
-    # Heuristic: if it’s text-like and contains SQL keywords near the start
-    head = path.read_bytes()[:4096]
-    if b"\x00" in head:
-        return False
-    text = head.decode("utf-8", errors="ignore").lstrip().upper()
-    if text.startswith("--") or text.startswith("/*"):
-        return True
-    keywords = ("CREATE ", "INSERT ", "ALTER ", "DROP ", "SET ", "BEGIN ", "COMMIT ")
-    return any(k in text for k in keywords)
-
-
-def _is_pg_dump_archive(path: Path, env: dict, pg_host: str, pg_port: int, pg_user: str) -> bool:
-    # pg_restore -l works only for pg_dump archives (custom/tar)
-    p = subprocess.run(
-        ["pg_restore", "-h", pg_host, "-p", str(pg_port), "-U", pg_user, "-l", str(path)],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    return p.returncode == 0
-
-
-def _run_or_raise(cmd: list[str], env: dict, err_prefix: str) -> None:
-    p = subprocess.run(cmd, env=env, capture_output=True, text=True)
-    if p.returncode != 0:
-        detail = (p.stderr or "").strip() or (p.stdout or "").strip() or f"{err_prefix} failed"
-        raise HTTPException(status_code=400, detail=detail)
 
 
 # ---------------------------
@@ -180,10 +137,14 @@ def connect_db(payload: DBConnectRequest):
                 "used_connection_string": bool(payload.connection_string),
             },
         )
+        schema = get_schema_summary()
+        sid = create_session(db_url=url, source=active_db_info.get('source', {}))
+        reset_database_url()
         return {
             "ok": True,
+            "db_session_id": sid,
             "database_url": url,
-            "schema": get_schema_summary(),
+            "schema": schema,
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -226,8 +187,11 @@ def detach_db_source():
 
 class UploadResponse(BaseModel):
     ok: bool
+    db_session_id: str
     database_url: str
     database_name: str
+    filename: str
+    bytes: int
     db_schema: str
 
 
@@ -242,45 +206,40 @@ async def upload_db_file(
 ):
     """
     Upload and import:
-    - .sql -> psql import into a NEW db name (unique)
-    - .dump/.backup/.tar -> pg_restore into a NEW db name (unique)
+    - .sql -> psql import into db_name
+    - .dump/.backup/.tar -> pg_restore into db_name
     - .sqlite/.db -> direct sqlite connection
     - .gz -> handles compressed formats
-    - no extension -> auto detect sqlite/sql/pg_dump archive
     """
 
     filename = _safe_filename(file.filename or "uploaded")
     ext = Path(filename).suffix.lower()
-
-    # Allow "no extension" uploads (we will detect format later)
-    if ext and ext not in AllowedUploadExt:
+    if ext not in AllowedUploadExt:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(AllowedUploadExt))} or no extension.",
+            detail=(
+                f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(AllowedUploadExt))}."
+            ),
         )
-
-    if ext == ".bak":
-        raise HTTPException(
-            status_code=400,
-            detail="'.bak' is not a PostgreSQL dump format (often SQL Server backup). Upload .sql or pg_dump (.dump/.backup/.tar), or .sqlite/.db.",
-        )
-
     save_path = UPLOAD_DIR / filename
+
     data = await file.read()
     save_path.write_bytes(data)
 
-    # Handle gzip
     if ext == ".gz":
         uncompressed_path = save_path.with_suffix("")
-        with gzip.open(save_path, "rb") as f_in:
-            with open(uncompressed_path, "wb") as f_out:
+        with gzip.open(save_path, 'rb') as f_in:
+            with open(uncompressed_path, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
         save_path.unlink()
         save_path = uncompressed_path
-        ext = save_path.suffix.lower()  # may become "" if original had no ext
+        ext = save_path.suffix.lower()
 
-    # ---- 1) Direct sqlite handling (by extension OR by header) ----
-    if ext in [".sqlite", ".db"] or (ext == "" and _is_sqlite_file(save_path)):
+    # If user didn't specify a DB name, generate a unique one to avoid collisions
+    if db_name.strip() == "uploaded_db":
+        db_name = f"uploaded_{uuid.uuid4().hex[:8]}"
+
+    if ext in [".sqlite", ".db"]:
         abs_path = save_path.resolve().as_posix()
         url = f"sqlite:///{abs_path}"
         try:
@@ -290,78 +249,49 @@ async def upload_db_file(
                 db_type="sqlite",
                 details={"filename": save_path.name, "path": abs_path},
             )
-            return UploadResponse(ok=True, database_url=url, database_name=save_path.name, db_schema=get_schema_summary())
+            schema = get_schema_summary()
+            sid = create_session(db_url=url, source={"attach_mode":"UPLOAD_FILE","db_type":"sqlite","details":{"filename": save_path.name}})
+            reset_database_url()
+            return UploadResponse(ok=True, db_session_id=sid, database_url=url, database_name=save_path.name, filename=save_path.name, bytes=save_path.stat().st_size, db_schema=schema)
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    # ---- 2) Postgres import (sql or pg_dump archive) ----
-    # For dynamic uploads, always restore into a fresh unique DB
-    final_db_name = _make_unique_db_name(db_name)
-
-    # If ext indicates postgres OR ext is blank (we will detect)
-    if ext in [".sql", ".dump", ".backup", ".tar"] or ext == "":
+    if ext in [".sql", ".dump", ".backup", ".tar"]:
         _require_pg_tools()
-
         env = os.environ.copy()
         env["PGPASSWORD"] = pg_password
 
-        # Create fresh DB (do not ignore failures; show real reason)
-        _run_or_raise(
-            ["createdb", "-h", pg_host, "-p", str(pg_port), "-U", pg_user, final_db_name],
+        # try to create DB (ignore if exists)
+        subprocess.run(
+            ["createdb", "-h", pg_host, "-p", str(pg_port), "-U", pg_user, db_name],
             env=env,
-            err_prefix="createdb",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
         )
 
-        detected_sql = False
-        detected_archive = False
-
-        if ext == "":
-            if _looks_like_sql_file(save_path):
-                detected_sql = True
-            else:
-                detected_archive = _is_pg_dump_archive(save_path, env, pg_host, pg_port, pg_user)
-
-            if not detected_sql and not detected_archive:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Unknown file format (not SQLite, not plain SQL, and not a pg_dump archive). Upload .sql or pg_dump (.dump/.backup/.tar), or .sqlite/.db.",
-                )
-
-        is_sql = (ext == ".sql") or detected_sql
-
-        if is_sql:
-            # psql import (stop on errors)
-            _run_or_raise(
-                [
-                    "psql",
-                    "-h", pg_host,
-                    "-p", str(pg_port),
-                    "-U", pg_user,
-                    "-d", final_db_name,
-                    "-v", "ON_ERROR_STOP=1",
-                    "-f", str(save_path),
-                ],
+        if ext == ".sql":
+            p = subprocess.run(
+                ["psql", "-h", pg_host, "-p", str(pg_port), "-U", pg_user, "-d", db_name, "-f", str(save_path)],
                 env=env,
-                err_prefix="psql import",
+                capture_output=True,
+                text=True,
+                check=False,
             )
+            if p.returncode != 0:
+                raise HTTPException(status_code=400, detail=p.stderr)
         else:
-            # pg_restore import (NO CLEAN for dynamic uploads)
-            _run_or_raise(
-                [
-                    "pg_restore",
-                    "-h", pg_host,
-                    "-p", str(pg_port),
-                    "-U", pg_user,
-                    "-d", final_db_name,
-                    "--no-owner",
-                    "--no-privileges",
-                    str(save_path),
-                ],
+            p = subprocess.run(
+                ["pg_restore", "-h", pg_host, "-p", str(pg_port), "-U", pg_user, "-d", db_name, "--clean", "--if-exists", "--no-owner", "--no-privileges", str(save_path)],
                 env=env,
-                err_prefix="pg_restore",
+                capture_output=True,
+                text=True,
+                check=False,
             )
+            if p.returncode != 0:
+                raise HTTPException(status_code=400, detail=p.stderr)
 
-        url = f"postgresql+psycopg2://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{final_db_name}"
+        url = f"postgresql+psycopg2://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{db_name}"
         try:
             set_database_url(url)
             set_database_source(
@@ -369,17 +299,18 @@ async def upload_db_file(
                 db_type="postgres",
                 details={
                     "filename": save_path.name,
-                    "db_name": final_db_name,
+                    "db_name": db_name,
                     "pg_host": pg_host,
                     "pg_port": pg_port,
                     "pg_user": pg_user,
                 },
             )
-            return UploadResponse(ok=True, database_url=url, database_name=final_db_name, db_schema=get_schema_summary())
+            schema = get_schema_summary()
+            sid = create_session(db_url=url, source={"attach_mode":"UPLOAD_FILE","db_type":"postgres","details":{"filename": save_path.name, "db_name": db_name}})
+            reset_database_url()
+            return UploadResponse(ok=True, db_session_id=sid, database_url=url, database_name=db_name, filename=save_path.name, bytes=save_path.stat().st_size, db_schema=schema)
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
-
-    raise HTTPException(status_code=400, detail="Unsupported upload format.")
 
 
 # ---------------------------
