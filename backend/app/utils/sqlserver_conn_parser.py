@@ -16,7 +16,7 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
     Supports formats like:
     - Data Source=host,Port;Initial Catalog=db;User ID=user;Password=pass;Trusted_connection=True;TrustServerCertificate=True;Integrated Security=False;
     - Server=host,Port;Database=db;User Id=user;Password=pass;TrustServerCertificate=yes;
-    - Data Source=host;Port=1433;Initial Catalog=db;User ID=user;Password=pass;
+    - Data Source=host;Port=2408;Initial Catalog=db;User ID=user;Password=pass;
     
     Args:
         connection_string: SQL Server connection string in ADO.NET format
@@ -30,7 +30,7 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
     # Initialize result dictionary with defaults
     parsed = {
         "host": None,
-        "port": 1433,  # Default SQL Server port
+        "port": 2408,  # Default SQL Server port
         "database": None,
         "username": None,
         "password": None,
@@ -116,7 +116,7 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
         # With pyodbc, we can use Windows Authentication
         host_part = parsed["host"]
         if parsed["port"]:
-            host_part = f"{host_part}:{parsed['port']}"
+            host_part = f"{host_part},{parsed['port']}"
         database = urllib.parse.quote_plus(parsed["database"])
         trust_cert = "yes" if parsed["TrustServerCertificate"] else "no"
         return parsed, f"mssql+pyodbc://{host_part}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}&Integrated Security=SSPI"
@@ -125,18 +125,18 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
     if not parsed["username"] or not parsed["password"]:
         raise ValueError("Username and Password are required for SQL Server connection (Windows Authentication requires pyodbc).")
     
-    # Build SQLAlchemy URL using pyodbc
-    # Format: mssql+pyodbc://user:password@host:port/database?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes/no
+    # Build minimal SQLAlchemy URL using pyodbc driver
+    # Minimal URL format similar to SSMS
     host_part = parsed["host"]
     if parsed["port"]:
-        host_part = f"{host_part}:{parsed['port']}"
+        host_part = f"{host_part},{parsed['port']}"
     
     # URL-encode special characters in username and password
     username = urllib.parse.quote_plus(parsed["username"])
     password = urllib.parse.quote_plus(parsed["password"])
     database = urllib.parse.quote_plus(parsed["database"])
     
-    # Build URL with pyodbc driver
+    # Build minimal URL with pyodbc driver
     trust_cert = "yes" if parsed["TrustServerCertificate"] else "no"
     sqlalchemy_url = f"mssql+pyodbc://{username}:{password}@{host_part}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}"
     
@@ -146,7 +146,7 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
 # Example usage and testing
 if __name__ == "__main__":
     # Test with the format provided by the user
-    test_connection_string = "Data Source=localhost,1433; Initial Catalog=MyDB; User ID=myuser; Password=mypass; Trusted_connection=True; TrustServerCertificate=True; Integrated Security=False;"
+    test_connection_string = "Data Source=localhost,2408; Initial Catalog=MyDB; User ID=myuser; Password=mypass; Trusted_connection=True; TrustServerCertificate=True; Integrated Security=False;"
     
     print("Testing connection string:")
     print(f"  Input: {test_connection_string}")
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     print()
     
     # Test another format
-    test2 = "Server=192.168.1.100,1433; Database=TestDB; User Id=sa; Password=P@ssw0rd"
+    test2 = "Server=192.168.1.100,2408; Database=TestDB; User Id=sa; Password=P@ssw0rd"
     print(f"Testing: {test2}")
     try:
         parsed2, url2 = parse_sqlserver_connection_string(test2)

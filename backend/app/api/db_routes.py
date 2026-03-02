@@ -137,7 +137,8 @@ def build_database_url(
 
     if db_type == "mssql":
         trust_cert = "yes"  # Default to yes for convenience
-        url = f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}"
+        # Use comma for mssql+pyodbc host:port separator
+        url = f"mssql+pyodbc://{username}:{password}@{host},{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}"
         return url
     
     if db_type == "oracle":
@@ -188,7 +189,7 @@ class DBConnectRequest(BaseModel):
         # Set default port based on db_type
         if self.port is None:
             if self.db_type == "mssql":
-                self.port = 1433
+                self.port = 2408
             elif self.db_type == "mysql":
                 self.port = 3306
             elif self.db_type == "oracle":

@@ -50,7 +50,7 @@ class DatabaseType(Enum):
 DEFAULT_PORTS: Dict[DatabaseType, int] = {
     DatabaseType.POSTGRESQL: 5432,
     DatabaseType.MYSQL: 3306,
-    DatabaseType.MSSQL: 1433,
+    DatabaseType.MSSQL: 2408,
     DatabaseType.ORACLE: 1521,
     DatabaseType.SQLITE: 0,
 }
@@ -648,7 +648,7 @@ class UniversalConnectionParser:
             # Windows Authentication
             host_part = params.host
             if params.port:
-                host_part = f"{host_part}:{params.port}"
+                host_part = f"{host_part},{params.port}"
             database = quote_plus(params.database or "")
             trust_cert = "yes" if params.trust_server_certificate else "no"
             return (
@@ -661,7 +661,7 @@ class UniversalConnectionParser:
             # SQL Server Authentication
             host_part = params.host
             if params.port:
-                host_part = f"{host_part}:{params.port}"
+                host_part = f"{host_part},{params.port}"
             
             username = quote_plus(params.username or "")
             password = quote_plus(params.password or "")
@@ -669,6 +669,7 @@ class UniversalConnectionParser:
             
             trust_cert = "yes" if params.trust_server_certificate else "no"
             
+            # Build minimal URL to match what SSMS uses
             return (
                 f"mssql+pyodbc://{username}:{password}@{host_part}/{database}"
                 f"?driver=ODBC+Driver+17+for+SQL+Server"
@@ -1042,7 +1043,7 @@ def parse_connection_string(
         ...     db_type="mssql"
         ... )
         >>> print(url)
-        mssql+pyodbc://sa:pass@localhost:1433/mydb?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes
+        mssql+pyodbc://sa:pass@localhost,2408/mydb?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes
     """
     manager = UniversalConnectionManager()
     params = manager.parse_and_validate(
