@@ -30,12 +30,12 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
     # Initialize result dictionary with defaults
     parsed: Dict[str, Any] = {
         "host": None,
-        "port": None,  # IMPORTANT: do not default to 2408
+        "port": None,
         "database": None,
         "username": None,
         "password": None,
         "TrustServerCertificate": True,
-        "Encrypt": True,
+        "Encrypt": False,  # FIXED: Default to False to avoid prelogin handshake errors
         "Integrated_Security": False,
     }
 
@@ -105,7 +105,7 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
         elif key in ("trustservercertificate", "trust server certificate"):
             parsed["TrustServerCertificate"] = value.lower() in ("true", "yes")
 
-        # Handle Encrypt (optional, but we default it True)
+        # Handle Encrypt
         elif key == "encrypt":
             parsed["Encrypt"] = value.lower() in ("true", "yes")
 
@@ -127,7 +127,12 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
 
     database = urllib.parse.quote_plus(parsed["database"])
 
-    encrypt = "yes" if parsed.get("Encrypt", True) else "no"
+    # CRITICAL FIX: Default Encrypt to "no" to prevent prelogin handshake failures.
+    # The original code defaulted to Encrypt=yes, which causes:
+    #   [08001] Client unable to establish connection because an error was
+    #   encountered during handshakes before login
+    # on servers that don't support TLS or have self-signed certs.
+    encrypt = "yes" if parsed.get("Encrypt", False) else "no"
     tsc = "yes" if parsed.get("TrustServerCertificate", True) else "no"
 
     # Handle Integrated Security / Windows Authentication (supported by pyodbc)

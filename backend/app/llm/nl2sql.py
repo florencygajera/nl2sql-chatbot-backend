@@ -5,33 +5,6 @@ from app.llm.client import LLMClient
 
 _client = LLMClient()
 
-# Known tables and columns from the database schema
-KNOWN_TABLES: dict[str, list[str]] = {
-    "User_Master": ["Id", "FirstName", "LastName", "Address", "UserName", "Password", "Role", "ContactNo", "EmailId", "AgencyName", "IsActive"],
-    "TaxRequest_Master": ["Id", "UserId", "InvoiceNo", "InvoiceDate", "CustomerName", "Address", "BasicAmount", "TaxAmount", "Status", "VehicleNo"],
-    "Receipt_Master": ["Id", "TaxRequestId", "ReceiptNo", "ReceiptDate", "Amount", "PaymentMode", "Status", "ContactNo"],
-    "Vehicle_Master": ["Id", "UserId", "InvoiceNo", "CustomerName", "ContactNo", "BasicAmount", "VehicleType", "EngineNo", "ChassisNo"],
-    "VehicleType_Master": ["Id", "VehicleType", "FuelType"],
-    "TaxRequest_Status": ["Id", "TaxRequestId", "Status", "Remarks"],
-    "TaxPay_Online": ["OrderId", "TaxRequestId", "Status", "ContactNo", "Amount"],
-    "Login_Token": ["Id", "UserId", "UserName", "JwtToken", "IsRevoked"],
-    "Otp_Master": ["Id", "UserId", "Otp", "ContactNo", "ExpiryTime"],
-    "IdProof_Type": ["Id", "UserId", "IdProofType"],
-    "User_VehicleType": ["Id", "UserId", "VehicleTypeId"],
-}
-
-TABLES_LIST = """- User_Master (Id, FirstName, LastName, Address, UserName, Password, Role, ContactNo, EmailId, AgencyName, IsActive)
-- TaxRequest_Master (Id, UserId, InvoiceNo, InvoiceDate, CustomerName, Address, BasicAmount, TaxAmount, Status, VehicleNo)
-- Receipt_Master (Id, TaxRequestId, ReceiptNo, ReceiptDate, Amount, PaymentMode, Status, ContactNo)
-- Vehicle_Master (Id, UserId, InvoiceNo, CustomerName, ContactNo, BasicAmount, VehicleType, EngineNo, ChassisNo)
-- VehicleType_Master (Id, VehicleType, FuelType)
-- TaxRequest_Status (Id, TaxRequestId, Status, Remarks)
-- TaxPay_Online (OrderId, TaxRequestId, Status, ContactNo, Amount)
-- Login_Token (Id, UserId, UserName, JwtToken, IsRevoked)
-- Otp_Master (Id, UserId, Otp, ContactNo, ExpiryTime)
-- IdProof_Type (Id, UserId, IdProofType)
-- User_VehicleType (Id, UserId, VehicleTypeId)"""
-
 
 def _normalize_llm_sql(raw_sql: str) -> str:
     """Normalize LLM SQL so it is executable:
@@ -59,74 +32,76 @@ def _normalize_llm_sql(raw_sql: str) -> str:
     return s.strip()
 
 
-def _quote_postgres_outside_literals(sql: str) -> str:
+def generate_sql(user_message: str, schema_hint: str = "", dialect: str = "unknown") -> str:
     """
-    Quote ONLY known table/column identifiers for PostgreSQL, but NEVER touch:
-    - string literals: '...'
-    - already double-quoted identifiers: "..."
-    This avoids breaking values like 'Car' and avoids ""Table"" problems.
+    Generate SQL from a natural language question using the LLM.
+    
+    Args:
+        user_message: The user's natural language question.
+        schema_hint: Database schema information (from live introspection).
+        dialect: Database dialect ("mssql", "postgresql", "mysql", "sqlite", "unknown").
+    
+    Returns:
+        Generated SQL string.
     """
-    if not sql:
-        return ""
-
-    # First fix doubled quotes globally
-    sql = sql.replace('""', '"')
-
-    # Split into parts: even indexes = outside '...'; odd indexes = inside '...'
-    # This handles escaped quotes inside strings: '' (SQL standard)
-    parts = re.split(r"('(?:''|[^'])*')", sql)
-
-    def quote_identifiers(segment: str) -> str:
-        # Do not mess with anything already in "double quotes"
-        # So we split further by double-quoted chunks and only edit outside them.
-        subparts = re.split(r'("(?:[^"]|"")*")', segment)
-
-        for i in range(0, len(subparts), 2):  # only outside double-quotes
-            s = subparts[i]
-
-            # Quote table names
-            for table in KNOWN_TABLES:
-                pattern = r'\b' + re.escape(table) + r'\b'
-                s = re.sub(pattern, f'"{table}"', s, flags=re.IGNORECASE)
-
-            # Quote column names
-            for cols in KNOWN_TABLES.values():
-                for col in cols:
-                    pattern = r'\b' + re.escape(col) + r'\b'
-                    s = re.sub(pattern, f'"{col}"', s, flags=re.IGNORECASE)
-
-            subparts[i] = s
-
-        return "".join(subparts)
-
-    # Apply quoting only to non-literal parts (outside single quotes)
-    for i in range(0, len(parts), 2):
-        parts[i] = quote_identifiers(parts[i])
-
-    return "".join(parts)
-
-
-def generate_sql(user_message: str, schema_hint: str = "") -> str:
-    user_lower = (user_message or "").lower()
-
-    # Detect dialect
-    wants_postgres = any(k in user_lower for k in ["postgresql", "postgres", "postgre", "pg"])
-    wants_mysql = "mysql" in user_lower
-    wants_sqlite = "sqlite" in user_lower
-    wants_generic_sql = ("sql" in user_lower) and not (wants_postgres or wants_mysql or wants_sqlite)
-
-    if not (wants_postgres or wants_mysql or wants_sqlite or wants_generic_sql):
-        return "Please specify which SQL dialect you want: PostgreSQL, MySQL, SQLite, or generic SQL."
-
     extra = schema_hint.strip()
-    extra_block = f"\n\nExtra schema hint:\n{extra}\n" if extra else ""
+    if not extra:
+        extra = "No schema information available."
 
-    # --- Build prompt ---
-    if wants_postgres:
-        # IMPORTANT: because your real identifiers are mixed case,
-        # Postgres needs "DoubleQuotes" always.
-        prompt = f"""
-You are a SQL generator.
+    # --- Determine dialect for prompt ---
+    dialect_lower = dialect.lower() if dialect else "unknown"
+    
+    if dialect_lower == "mssql":
+        prompt = _build_mssql_prompt(user_message, extra)
+    elif dialect_lower in ("postgresql", "postgres"):
+        prompt = _build_postgres_prompt(user_message, extra)
+    elif dialect_lower == "mysql":
+        prompt = _build_mysql_prompt(user_message, extra)
+    elif dialect_lower == "sqlite":
+        prompt = _build_sqlite_prompt(user_message, extra)
+    else:
+        # Try to detect from user message
+        user_lower = (user_message or "").lower()
+        if any(k in user_lower for k in ["mssql", "sql server", "sqlserver"]):
+            prompt = _build_mssql_prompt(user_message, extra)
+        elif any(k in user_lower for k in ["postgresql", "postgres", "postgre", "pg"]):
+            prompt = _build_postgres_prompt(user_message, extra)
+        elif "mysql" in user_lower:
+            prompt = _build_mysql_prompt(user_message, extra)
+        elif "sqlite" in user_lower:
+            prompt = _build_sqlite_prompt(user_message, extra)
+        else:
+            # Default to generic SQL
+            prompt = _build_generic_prompt(user_message, extra)
+
+    raw = _client.generate(prompt).strip()
+    raw = _normalize_llm_sql(raw)
+
+    return raw
+
+
+def _build_mssql_prompt(user_message: str, schema: str) -> str:
+    return f"""You are a SQL generator for Microsoft SQL Server (T-SQL).
+
+Return ONLY ONE T-SQL SELECT query. No markdown. No explanations.
+Do NOT wrap output in ```sql fences.
+
+CRITICAL SQL SERVER RULES:
+- Use square brackets [] for table and column names if they contain special characters or are reserved words.
+  Example: SELECT [Id], [FirstName] FROM [User_Master]
+- Do NOT use LIMIT. Instead use SELECT TOP N for limiting results.
+  Example: SELECT TOP 10 [Id] FROM [User_Master]
+- Do not use double quotes for identifiers; use square brackets.
+- Do not invent tables or columns. Use only the schema below.
+
+Database Schema:
+{schema}
+
+Question: {user_message}""".strip()
+
+
+def _build_postgres_prompt(user_message: str, schema: str) -> str:
+    return f"""You are a SQL generator for PostgreSQL.
 
 Return ONLY ONE PostgreSQL SELECT query. No markdown. No explanations.
 Do NOT wrap output in ```sql fences.
@@ -137,57 +112,47 @@ CRITICAL POSTGRES RULES:
 - NEVER output doubled quotes like ""User_Master"".
 - Do not invent tables/columns. Use only the schema below.
 
-Tables:
-{TABLES_LIST}{extra_block}
-Question: {user_message}
-""".strip()
+Database Schema:
+{schema}
 
-    elif wants_mysql:
-        prompt = f"""
-You are a SQL generator.
+Question: {user_message}""".strip()
+
+
+def _build_mysql_prompt(user_message: str, schema: str) -> str:
+    return f"""You are a SQL generator for MySQL.
 
 Return ONLY ONE MySQL SELECT query. No markdown. No explanations.
 Do NOT wrap output in ```sql fences.
 Do not invent tables/columns. Use only the schema below.
 
-Tables:
-{TABLES_LIST}{extra_block}
-Question: {user_message}
-""".strip()
+Database Schema:
+{schema}
 
-    elif wants_sqlite:
-        prompt = f"""
-You are a SQL generator.
+Question: {user_message}""".strip()
+
+
+def _build_sqlite_prompt(user_message: str, schema: str) -> str:
+    return f"""You are a SQL generator for SQLite.
 
 Return ONLY ONE SQLite SELECT query. No markdown. No explanations.
 Do NOT wrap output in ```sql fences.
 Do not invent tables/columns. Use only the schema below.
 
-Tables:
-{TABLES_LIST}{extra_block}
-Question: {user_message}
-""".strip()
+Database Schema:
+{schema}
 
-    else:
-        prompt = f"""
-You are a SQL generator.
+Question: {user_message}""".strip()
+
+
+def _build_generic_prompt(user_message: str, schema: str) -> str:
+    return f"""You are a SQL generator.
 
 Return ONLY ONE generic SELECT query. No markdown. No explanations.
 Do NOT wrap output in ```sql fences.
 Avoid dialect-specific quoting unless necessary.
 Do not invent tables/columns. Use only the schema below.
 
-Tables:
-{TABLES_LIST}{extra_block}
-Question: {user_message}
-""".strip()
+Database Schema:
+{schema}
 
-    raw = _client.generate(prompt).strip()
-    raw = _normalize_llm_sql(raw)
-
-    # ✅ BEST PRACTICE FOR YOUR SCHEMA:
-    # Your tables/columns are MixedCase, so Postgres MUST use quotes.
-    if wants_postgres:
-        raw = _quote_postgres_outside_literals(raw)
-
-    return raw
+Question: {user_message}""".strip()

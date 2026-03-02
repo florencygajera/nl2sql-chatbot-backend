@@ -5,7 +5,7 @@ Safety guarantees
 -----------------
 - Only called with SQL that has already passed ``sql_guard.validate_and_sanitize``.
 - Uses SQLAlchemy ``text()`` with bound parameters — no raw string interpolation.
-- Runs inside a read-only transaction (SET TRANSACTION READ ONLY where possible).
+- Runs inside a read-only transaction where supported (PostgreSQL).
 - Enforces a hard row ceiling from settings.
 """
 from __future__ import annotations
@@ -38,7 +38,13 @@ class QueryExecutionError(Exception):
 
 # ── Executor ──────────────────────────────────────────────────────────────────
 
-def execute_query(db: Session, sql: str, params: dict[str, Any], timeout_seconds: int = 30) -> QueryResult:
+def execute_query(
+    db: Session,
+    sql: str,
+    params: dict[str, Any],
+    timeout_seconds: int = 30,
+    dialect: str = "unknown",
+) -> QueryResult:
     """
     Execute a validated SELECT statement and return structured results.
 
@@ -52,6 +58,8 @@ def execute_query(db: Session, sql: str, params: dict[str, Any], timeout_seconds
         Named bind parameters matching :param_name placeholders in ``sql``.
     timeout_seconds:
         Query execution timeout in seconds (default: 30).
+    dialect:
+        Database dialect ("mssql", "postgresql", "mysql", "sqlite", "unknown").
 
     Returns
     -------
@@ -87,11 +95,13 @@ def execute_query(db: Session, sql: str, params: dict[str, Any], timeout_seconds
         timeout_ctx = nullcontext()
 
     try:
-        # Attempt to set the transaction as read-only (PostgreSQL supports this)
-        try:
-            db.execute(text("SET TRANSACTION READ ONLY"))
-        except Exception:
-            pass  # graceful fallback for databases that don't support this
+        # Attempt to set the transaction as read-only
+        # ONLY for PostgreSQL — MSSQL does NOT support SET TRANSACTION READ ONLY
+        if dialect in ("postgresql", "postgres"):
+            try:
+                db.execute(text("SET TRANSACTION READ ONLY"))
+            except Exception:
+                pass  # graceful fallback
 
         stmt = text(sql)
         
@@ -102,7 +112,7 @@ def execute_query(db: Session, sql: str, params: dict[str, Any], timeout_seconds
         columns = list(cursor.keys())
         raw_rows = cursor.fetchall()
 
-        # Enforce hard row ceiling (defensive; SQL guard already added LIMIT)
+        # Enforce hard row ceiling (defensive; SQL guard already added LIMIT/TOP)
         if len(raw_rows) > settings.MAX_ROW_LIMIT:
             raw_rows = raw_rows[: settings.MAX_ROW_LIMIT]
             logger.warning(

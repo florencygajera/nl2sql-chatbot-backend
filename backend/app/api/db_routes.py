@@ -137,7 +137,9 @@ def build_database_url(
         return url
 
     if db_type == "mssql":
-        # Use ODBC Driver 17 for SQL Server (Encrypt helps avoid prelogin handshake issues)
+        # Use ODBC Driver 17 for SQL Server
+        # IMPORTANT: Encrypt=yes prevents prelogin handshake failures on servers
+        # that don't support TLS or have self-signed certificates.
         u = urllib.parse.quote_plus(username or "")
         p = urllib.parse.quote_plus(password or "")
         db = urllib.parse.quote_plus(database or "")

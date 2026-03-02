@@ -15,6 +15,7 @@ print(f"Testing connection to {SERVER},{PORT}")
 print("=" * 60)
 
 # Build connection string - using ODBC Driver 17
+# IMPORTANT: Encrypt=no prevents prelogin handshake failures
 conn_str = (
     f"DRIVER={{ODBC Driver 17 for SQL Server}};"
     f"SERVER={SERVER},{PORT};"
@@ -22,6 +23,7 @@ conn_str = (
     f"UID={USERNAME};"
     f"PWD={PASSWORD};"
     f"TrustServerCertificate=yes;"
+    f"Encrypt=no;"
 )
 
 print(f"Connection string: {conn_str}")
@@ -35,6 +37,13 @@ try:
     cursor.execute("SELECT @@VERSION")
     row = cursor.fetchone()
     print(f"SQL Server Version: {row[0][:100]}...")
+    
+    # List tables
+    cursor.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
+    tables = cursor.fetchall()
+    print(f"\nFound {len(tables)} tables:")
+    for t in tables[:20]:
+        print(f"  - {t[0]}")
     
     cursor.close()
     conn.close()

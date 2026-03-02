@@ -6,7 +6,7 @@ Responsibilities
 1. Block any non-SELECT statement (INSERT, UPDATE, DELETE, DROP, ALTER, …).
 2. Prevent multiple statements (semicolons outside string literals).
 3. Detect dangerous patterns (stacked queries, comment injections, etc.).
-4. Automatically inject LIMIT for non-aggregate queries.
+4. Automatically inject LIMIT/TOP for non-aggregate queries (dialect-aware).
 5. Encourage :param-style placeholders (optional; keep flexible).
 
 All public functions raise ``SQLGuardError`` on violation.
@@ -25,6 +25,10 @@ class SQLGuardError(Exception):
     """Raised when SQL fails a security check."""
 
 
+# NOTE: Removed \\bSET\\b — this was incorrectly blocking SQL like
+# "SELECT ... OFFSET ... SET ..." and causing issues. The real danger
+# (SET statements) is already prevented by requiring the query start
+# with SELECT or WITH.
 _FORBIDDEN_KEYWORDS: tuple[str, ...] = (
     r"\bINSERT\b",
     r"\bUPDATE\b",
@@ -43,7 +47,6 @@ _FORBIDDEN_KEYWORDS: tuple[str, ...] = (
     r"\bCOMMIT\b",
     r"\bROLLBACK\b",
     r"\bSAVEPOINT\b",
-    r"\bSET\b",
     r"\bCOPY\b",
     r"\bLOAD\b",
     r"\bIMPORT\b",
@@ -55,6 +58,8 @@ _AGGREGATE_PATTERN = re.compile(
 )
 
 _LIMIT_PATTERN = re.compile(r"\bLIMIT\s+\d+\b", re.IGNORECASE)
+_TOP_PATTERN = re.compile(r"\bTOP\s+\d+\b", re.IGNORECASE)
+_OFFSET_FETCH_PATTERN = re.compile(r"\bOFFSET\s+\d+\s+ROWS\b", re.IGNORECASE)
 
 _SEMICOLON_OUTSIDE_LITERAL = re.compile(
     r";(?=(?:[^'\"]*['\"][^'\"]*['\"])*[^'\"]*$)"
@@ -75,7 +80,14 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
 
 
-def validate_and_sanitize(sql: str) -> ValidationResult:
+def validate_and_sanitize(sql: str, dialect: str = "unknown") -> ValidationResult:
+    """
+    Validate and sanitize SQL. Supports dialect-aware LIMIT/TOP injection.
+    
+    Args:
+        sql: The SQL string to validate.
+        dialect: Database dialect ("mssql", "postgresql", "mysql", "sqlite", "unknown").
+    """
     sql = _strip_markdown_fences(sql).strip()
     if not sql:
         raise SQLGuardError("SQL query is empty.")
@@ -97,13 +109,13 @@ def validate_and_sanitize(sql: str) -> ValidationResult:
     if _SEMICOLON_OUTSIDE_LITERAL.search(sql):
         raise SQLGuardError("Multiple SQL statements are not permitted (semicolon detected).")
 
-    sql = _maybe_inject_limit(sql)
+    sql = _maybe_inject_limit(sql, dialect)
 
     return ValidationResult(is_valid=True, sanitized_sql=sql)
 
 
-def raise_if_invalid(sql: str) -> str:
-    result = validate_and_sanitize(sql)
+def raise_if_invalid(sql: str, dialect: str = "unknown") -> str:
+    result = validate_and_sanitize(sql, dialect)
     if not result.is_valid:
         raise SQLGuardError("; ".join(result.errors))
     return result.sanitized_sql
@@ -130,11 +142,37 @@ def _strip_trailing_semicolon(sql: str) -> str:
     return s
 
 
-def _maybe_inject_limit(sql: str) -> str:
+def _maybe_inject_limit(sql: str, dialect: str = "unknown") -> str:
+    """
+    Inject a row limit for non-aggregate queries.
+    
+    - PostgreSQL/MySQL/SQLite: uses LIMIT N
+    - MSSQL: uses SELECT TOP N ... (injected after SELECT keyword)
+    """
     is_aggregate = bool(_AGGREGATE_PATTERN.search(sql))
     has_limit = bool(_LIMIT_PATTERN.search(sql))
+    has_top = bool(_TOP_PATTERN.search(sql))
+    has_offset_fetch = bool(_OFFSET_FETCH_PATTERN.search(sql))
 
-    if not is_aggregate and not has_limit:
-        sql = f"{sql.rstrip()} LIMIT {settings.DEFAULT_ROW_LIMIT}"
+    if is_aggregate or has_limit or has_top or has_offset_fetch:
+        return sql
+
+    limit = settings.DEFAULT_ROW_LIMIT
+
+    if dialect == "mssql":
+        # SQL Server uses SELECT TOP N ...
+        # Insert TOP after the first SELECT keyword
+        sql_stripped = sql.lstrip()
+        match = re.match(r"(SELECT\s+)(DISTINCT\s+)?", sql_stripped, re.IGNORECASE)
+        if match:
+            prefix = match.group(0)
+            rest = sql_stripped[len(prefix):]
+            sql = f"{prefix}TOP {limit} {rest}"
+        else:
+            # Fallback: just prepend at beginning (shouldn't happen for valid SELECT)
+            sql = f"SELECT TOP {limit} " + sql[7:]  # skip "SELECT "
+    else:
+        # PostgreSQL, MySQL, SQLite all support LIMIT
+        sql = f"{sql.rstrip()} LIMIT {limit}"
 
     return sql

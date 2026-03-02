@@ -51,7 +51,7 @@ class DatabaseType(Enum):
 DEFAULT_PORTS: Dict[DatabaseType, int] = {
     DatabaseType.POSTGRESQL: 5432,
     DatabaseType.MYSQL: 3306,
-    DatabaseType.MSSQL: 1433,  # FIXED: SQL Server default port
+    DatabaseType.MSSQL: 1433,
     DatabaseType.ORACLE: 1521,
     DatabaseType.SQLITE: 0,
 }
@@ -71,6 +71,7 @@ class ConnectionParams:
     sslmode: Optional[str] = None
     trust_server_certificate: bool = True
     integrated_security: bool = False
+    encrypt: bool = False  # Default to False to avoid prelogin handshake errors
     file_path: Optional[str] = None
     additional_params: Dict[str, str] = field(default_factory=dict)
 
@@ -469,6 +470,10 @@ class UniversalConnectionParser:
             username = None
             password = None
 
+        # Parse encrypt flag — default to False for MSSQL to avoid prelogin handshake errors
+        encrypt_val = params.get("encrypt", "").lower()
+        encrypt = encrypt_val in ("yes", "true", "1")
+
         sslmode = params.get("sslmode")
         driver = params.get("driver")
 
@@ -495,6 +500,7 @@ class UniversalConnectionParser:
             sslmode=sslmode,
             trust_server_certificate=trust_server_certificate,
             integrated_security=integrated_security,
+            encrypt=encrypt,
             file_path=file_path,
             additional_params=params,
         )
@@ -537,8 +543,6 @@ class UniversalConnectionParser:
             else:
                 return "sqlite:///:memory:"
 
-        dialect = self.SQLALCHEMY_DIALECTS.get(db_type, "postgresql")
-
         if db_type == DatabaseType.MSSQL:
             return self._build_mssql_url(params)
         elif db_type == DatabaseType.POSTGRESQL:
@@ -548,23 +552,21 @@ class UniversalConnectionParser:
         elif db_type == DatabaseType.ORACLE:
             return self._build_oracle_url(params)
         else:
+            dialect = self.SQLALCHEMY_DIALECTS.get(db_type, "postgresql")
             return self._build_generic_url(params, dialect)
 
     def _build_mssql_url(self, params: ConnectionParams) -> str:
-        """Build MSSQL SQLAlchemy URL."""
+        """Build MSSQL SQLAlchemy URL with proper TLS/encryption settings."""
         host_part = params.host or "localhost"
         if params.port:
             host_part = f"{host_part},{params.port}"
 
         database = quote_plus(params.database or "")
 
-        # Always include Encrypt + TrustServerCertificate to avoid prelogin handshake failures
-        encrypt_val = params.additional_params.get("encrypt")
-        if encrypt_val is None:
-            encrypt = "yes"
-        else:
-            encrypt = "yes" if str(encrypt_val).lower() in ("1", "true", "yes") else "no"
-
+        # CRITICAL: Use Encrypt=no by default to avoid prelogin handshake failures
+        # on servers that don't support TLS or have self-signed certs.
+        # Only encrypt if explicitly requested AND TrustServerCertificate is set.
+        encrypt = "yes" if params.encrypt else "no"
         trust = "yes" if params.trust_server_certificate else "no"
 
         if params.integrated_security:
@@ -718,7 +720,7 @@ class UniversalConnectionManager:
     def test_connection(
         self,
         params: ConnectionParams,
-        timeout: int = 10
+        timeout: int = 30
     ) -> Tuple[bool, str]:
         try:
             url = self.parser.to_sqlalchemy_url(params)
@@ -731,7 +733,7 @@ class UniversalConnectionManager:
             if params.db_type != DatabaseType.SQLITE:
                 # MSSQL (pyodbc) uses 'timeout', Postgres commonly uses 'connect_timeout'
                 if params.db_type == DatabaseType.MSSQL:
-                    engine_options["connect_args"] = {"timeout": timeout}
+                    engine_options["connect_args"] = {"timeout": max(timeout, 30)}
                 else:
                     engine_options["connect_args"] = {"connect_timeout": timeout}
             else:
@@ -752,75 +754,71 @@ class UniversalConnectionManager:
             return False, f"Connection failed: {str(e)}"
 
     def connect(
-    self,
-    connection_string: Optional[str] = None,
-    db_type: Optional[str] = None,
-    host: Optional[str] = None,
-    port: Optional[int] = None,
-    database: Optional[str] = None,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
-    test_connection: bool = True,
-    timeout: int = 10,
-    **kwargs
-) -> Tuple[Engine, ConnectionParams]:
-
-    params = self.parse_and_validate(
-    connection_string=connection_string,
-    db_type=db_type,
-     host=host,
-        port=port,
-        database=database,
-        username=username,
-        password=password,
+        self,
+        connection_string: Optional[str] = None,
+        db_type: Optional[str] = None,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        database: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        test_connection: bool = True,
+        timeout: int = 30,
         **kwargs
-    )
+    ) -> Tuple[Engine, ConnectionParams]:
 
-    if test_connection:
-        success, message = self.test_connection(params, timeout)
-        if not success:
-            raise ConnectionError(message)
+        params = self.parse_and_validate(
+            connection_string=connection_string,
+            db_type=db_type,
+            host=host,
+            port=port,
+            database=database,
+            username=username,
+            password=password,
+            **kwargs
+        )
 
-    url = self.parser.to_sqlalchemy_url(params)
+        if test_connection:
+            success, message = self.test_connection(params, timeout)
+            if not success:
+                raise ConnectionError(message)
 
-    engine_options: Dict[str, Any] = {
-        "pool_pre_ping": True,
-        "echo": False,
-    }
+        url = self.parser.to_sqlalchemy_url(params)
 
-    if params.db_type == DatabaseType.SQLITE:
-        engine_options["connect_args"] = {"check_same_thread": False}
-        self._engine = create_engine(url, **engine_options)
-        self._current_params = params
-        return self._engine, params
-
-    # Pool settings for server DBs
-    engine_options.update({
-        "pool_size": 5,
-        "max_overflow": 10,
-        "pool_timeout": 30,
-        "pool_recycle": 1800,
-    })
-
-    # ✅ DB-specific connect_args (IMPORTANT)
-    if params.db_type == DatabaseType.MSSQL:
-        # pyodbc expects 'timeout'
-        engine_options["connect_args"] = {"timeout": timeout}
-
-    elif params.db_type == DatabaseType.POSTGRESQL:
-        engine_options["connect_args"] = {
-            "connect_timeout": timeout,
-            "options": "-c statement_timeout=30000",
+        engine_options: Dict[str, Any] = {
+            "pool_pre_ping": True,
+            "echo": False,
         }
 
-    else:
-        # MySQL/others: do NOT pass postgres 'options'
-        engine_options["connect_args"] = {"connect_timeout": timeout}
+        if params.db_type == DatabaseType.SQLITE:
+            engine_options["connect_args"] = {"check_same_thread": False}
+            self._engine = create_engine(url, **engine_options)
+            self._current_params = params
+            return self._engine, params
 
-    self._engine = create_engine(url, **engine_options)
-    self._current_params = params
+        # Pool settings for server DBs
+        engine_options.update({
+            "pool_size": 5,
+            "max_overflow": 10,
+            "pool_timeout": 30,
+            "pool_recycle": 1800,
+        })
 
-    return self._engine, params
+        # DB-specific connect_args
+        if params.db_type == DatabaseType.MSSQL:
+            engine_options["connect_args"] = {"timeout": max(timeout, 30)}
+        elif params.db_type == DatabaseType.POSTGRESQL:
+            engine_options["connect_args"] = {
+                "connect_timeout": timeout,
+                "options": "-c statement_timeout=30000",
+            }
+        else:
+            engine_options["connect_args"] = {"connect_timeout": timeout}
+
+        self._engine = create_engine(url, **engine_options)
+        self._current_params = params
+
+        return self._engine, params
 
     def disconnect(self) -> None:
         if self._engine:

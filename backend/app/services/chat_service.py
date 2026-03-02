@@ -6,8 +6,8 @@ Flow
 1. Detect response mode (QUERY_ONLY / ANSWER_ONLY / QUERY_AND_ANSWER).
 2. Fetch live DB schema summary.
 3. Call the local LLM to generate SQL.
-4. Validate SQL.
-5. Execute query.
+4. Validate SQL (dialect-aware).
+5. Execute query (dialect-aware).
 6. Build and return response.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db.session import get_schema_summary
+from app.db.session import get_schema_summary, get_current_dialect
 from app.llm.nl2sql import generate_sql
 from app.security.sql_guard import SQLGuardError, validate_and_sanitize
 from app.services.query_executor import QueryExecutionError, QueryResult, execute_query
@@ -111,6 +111,10 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
     """
     Process a user message end-to-end and return a JSON-serialisable response.
     """
+    # ── Step 0: Detect current DB dialect ─────────────────────────────────────
+    dialect = get_current_dialect()
+    logger.info("Current DB dialect: %s", dialect)
+
     # ── Step 1: Detect desired response mode ──────────────────────────────────
     mode = _detect_response_mode(message)
     logger.info("User message: %r | Mode: %s", message, mode)
@@ -124,7 +128,7 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
 
     # ── Step 3: Call LLM to generate SQL ──────────────────────────────────────
     try:
-        raw_sql = generate_sql(message, schema)
+        raw_sql = generate_sql(message, schema_hint=schema, dialect=dialect)
     except Exception as exc:
         logger.error("LLM error: %s", exc)
         return {
@@ -150,9 +154,9 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
 
     explanation = f"Generated SQL for: {message}"
 
-    # ── Step 4: Validate SQL ──────────────────────────────────────────────────
+    # ── Step 4: Validate SQL (dialect-aware) ──────────────────────────────────
     try:
-        validation = validate_and_sanitize(raw_sql)
+        validation = validate_and_sanitize(raw_sql, dialect=dialect)
         safe_sql = validation.sanitized_sql
     except SQLGuardError as exc:
         logger.warning("SQL guard rejected query: %s | SQL: %s", exc, raw_sql)
@@ -169,7 +173,7 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
 
     if mode != "QUERY_ONLY":
         try:
-            result = execute_query(db, safe_sql, {})
+            result = execute_query(db, safe_sql, {}, dialect=dialect)
         except QueryExecutionError as exc:
             logger.error("Query execution failed: %s", exc)
             return {

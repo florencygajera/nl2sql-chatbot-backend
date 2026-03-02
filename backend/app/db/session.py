@@ -36,15 +36,32 @@ def _mask_db_url(url: str) -> str:
         return url
 
 
+def _detect_db_dialect(url: str) -> str:
+    """Detect the database dialect from the URL."""
+    url_lower = url.lower()
+    if "mssql" in url_lower or "sqlserver" in url_lower:
+        return "mssql"
+    elif "postgresql" in url_lower or "postgres" in url_lower:
+        return "postgresql"
+    elif "mysql" in url_lower:
+        return "mysql"
+    elif "sqlite" in url_lower:
+        return "sqlite"
+    elif "oracle" in url_lower:
+        return "oracle"
+    return "unknown"
+
+
 # NOTE: This is an in-memory state (single-process). If you run multiple
 # workers, each worker keeps its own active DB engine.
 active_db_info = {
     "url": settings.DATABASE_URL,
     "masked_url": _mask_db_url(settings.DATABASE_URL),
     "status": "connected",
+    "dialect": _detect_db_dialect(settings.DATABASE_URL),
     "source": {
         "attach_mode": "ENV_DEFAULT",  # ENV_DEFAULT | UPLOAD_FILE | CONNECTION
-        "db_type": "postgres",
+        "db_type": _detect_db_dialect(settings.DATABASE_URL),
         "details": {},
     },
 }
@@ -65,23 +82,22 @@ def create_app_engine(url: str):
         "pool_recycle": settings.DB_POOL_RECYCLE,
     })
 
+    dialect = _detect_db_dialect(url)
+
     # Postgres-specific connect args
-    if "postgresql" in url:
+    if dialect == "postgresql":
         kwargs["connect_args"] = {
             "connect_timeout": 10,
             "options": "-c statement_timeout=30000"
         }
 
     # MSSQL (pyodbc) connect args
-    elif "mssql" in url or "sqlserver" in url:
-        # IMPORTANT:
-        # - pyodbc does NOT use "connect_timeout" (that's for psycopg2 etc.)
-        # - pyodbc uses "timeout" (seconds)
-        kwargs["connect_args"] = {"timeout": 10}
+    elif dialect == "mssql":
+        # pyodbc uses "timeout" (seconds), NOT "connect_timeout"
+        kwargs["connect_args"] = {"timeout": 30}
 
     # MySQL and others
     else:
-        # Many DBAPIs accept connect_timeout, but not all; keep it minimal.
         kwargs["connect_args"] = {"connect_timeout": 10}
 
     logger.warning(
@@ -111,12 +127,13 @@ def _test_engine_connect(new_url: str) -> None:
     and to prevent invalid attributes from being passed to the wrong driver.
     """
     test_kwargs = {"pool_pre_ping": True}
+    dialect = _detect_db_dialect(new_url)
 
     if new_url.startswith("sqlite"):
         test_kwargs["connect_args"] = {"check_same_thread": False}
-    elif "mssql" in new_url or "sqlserver" in new_url:
-        test_kwargs["connect_args"] = {"timeout": 10}
-    elif "postgresql" in new_url:
+    elif dialect == "mssql":
+        test_kwargs["connect_args"] = {"timeout": 30}
+    elif dialect == "postgresql":
         test_kwargs["connect_args"] = {"connect_timeout": 10}
     else:
         test_kwargs["connect_args"] = {"connect_timeout": 10}
@@ -132,15 +149,16 @@ def _test_engine_connect(new_url: str) -> None:
 def set_database_url(new_url: str) -> None:
     global engine, SessionLocal, active_db_info
 
+    dialect = _detect_db_dialect(new_url)
+
     # 1) Test connection first with correct timeout arg per DB
     test_kwargs = {"pool_pre_ping": True}
 
     if new_url.startswith("sqlite"):
         test_kwargs["connect_args"] = {"check_same_thread": False}
-    elif "mssql" in new_url or "sqlserver" in new_url:
-        # pyodbc uses "timeout" (not connect_timeout)
-        test_kwargs["connect_args"] = {"timeout": 10}
-    elif "postgresql" in new_url:
+    elif dialect == "mssql":
+        test_kwargs["connect_args"] = {"timeout": 30}
+    elif dialect == "postgresql":
         test_kwargs["connect_args"] = {"connect_timeout": 10}
     else:
         test_kwargs["connect_args"] = {"connect_timeout": 10}
@@ -161,6 +179,7 @@ def set_database_url(new_url: str) -> None:
     active_db_info["url"] = new_url
     active_db_info["masked_url"] = _mask_db_url(new_url)
     active_db_info["status"] = "connected"
+    active_db_info["dialect"] = dialect
 
 
 def set_database_source(*, attach_mode: str, db_type: str, details: dict) -> None:
@@ -175,7 +194,8 @@ def set_database_source(*, attach_mode: str, db_type: str, details: dict) -> Non
 def reset_database_url() -> None:
     """Reset to the DATABASE_URL from environment/config."""
     set_database_url(DEFAULT_DATABASE_URL)
-    set_database_source(attach_mode="ENV_DEFAULT", db_type="postgres", details={})
+    default_dialect = _detect_db_dialect(DEFAULT_DATABASE_URL)
+    set_database_source(attach_mode="ENV_DEFAULT", db_type=default_dialect, details={})
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -190,6 +210,11 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def get_current_dialect() -> str:
+    """Return the current DB dialect (mssql, postgresql, mysql, sqlite, oracle, unknown)."""
+    return active_db_info.get("dialect", "unknown")
 
 
 def get_schema_summary() -> str:
@@ -209,11 +234,15 @@ def get_schema_summary() -> str:
                 continue
             lines.append(f'  - "{col["name"]}" ({col["type"]})')
 
-        for fk in inspector.get_foreign_keys(table_name):
-            lines.append(
-                f'  FK: "{fk["constrained_columns"][0]}" -> '
-                f'"{fk["referred_table"]}"."{fk["referred_columns"][0]}"'
-            )
+        try:
+            for fk in inspector.get_foreign_keys(table_name):
+                lines.append(
+                    f'  FK: "{fk["constrained_columns"][0]}" -> '
+                    f'"{fk["referred_table"]}"."{fk["referred_columns"][0]}"'
+                )
+        except Exception:
+            pass  # Some DBs may not support FK introspection easily
+
         lines.append("")
 
     return "\n".join(lines).strip()
