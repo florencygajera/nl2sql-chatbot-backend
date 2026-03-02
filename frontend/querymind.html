@@ -107,15 +107,8 @@
     }
 
     @keyframes pulse-border {
-
-      0%,
-      100% {
-        box-shadow: 0 0 16px var(--accent-glow);
-      }
-
-      50% {
-        box-shadow: 0 0 28px var(--accent-glow), 0 0 8px var(--accent);
-      }
+      0%, 100% { box-shadow: 0 0 16px var(--accent-glow); }
+      50% { box-shadow: 0 0 28px var(--accent-glow), 0 0 8px var(--accent); }
     }
 
     .logo-text {
@@ -125,9 +118,7 @@
       color: #fff;
     }
 
-    .logo-text span {
-      color: var(--accent);
-    }
+    .logo-text span { color: var(--accent); }
 
     .header-right {
       display: flex;
@@ -151,15 +142,8 @@
     }
 
     @keyframes blink {
-
-      0%,
-      100% {
-        opacity: 1;
-      }
-
-      50% {
-        opacity: 0.4;
-      }
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
     }
 
     .status-label {
@@ -182,9 +166,7 @@
       transition: border-color 0.2s;
     }
 
-    .backend-url-input:focus {
-      border-color: var(--accent);
-    }
+    .backend-url-input:focus { border-color: var(--accent); }
 
     .add-sql-btn {
       width: 36px;
@@ -211,9 +193,7 @@
       box-shadow: 0 0 0 3px var(--accent-dim);
     }
 
-    .add-sql-btn:active {
-      transform: scale(0.96);
-    }
+    .add-sql-btn:active { transform: scale(0.96); }
 
     .chat-area {
       overflow-y: auto;
@@ -224,18 +204,9 @@
       scroll-behavior: smooth;
     }
 
-    .chat-area::-webkit-scrollbar {
-      width: 4px;
-    }
-
-    .chat-area::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    .chat-area::-webkit-scrollbar-thumb {
-      background: var(--border2);
-      border-radius: 4px;
-    }
+    .chat-area::-webkit-scrollbar { width: 4px; }
+    .chat-area::-webkit-scrollbar-track { background: transparent; }
+    .chat-area::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
 
     .welcome {
       text-align: center;
@@ -300,20 +271,11 @@
     }
 
     @keyframes fadeUp {
-      from {
-        opacity: 0;
-        transform: translateY(12px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .message.user {
-      flex-direction: row-reverse;
-    }
+    .message.user { flex-direction: row-reverse; }
 
     .avatar {
       width: 34px;
@@ -338,10 +300,7 @@
       border: 1px solid rgba(0, 212, 170, 0.3);
     }
 
-    .bubble {
-      flex: 1;
-      min-width: 0;
-    }
+    .bubble { flex: 1; min-width: 0; }
 
     .bubble-inner {
       padding: 14px 18px;
@@ -374,9 +333,7 @@
       padding: 0 2px;
     }
 
-    .message.user .bubble-meta {
-      text-align: right;
-    }
+    .message.user .bubble-meta { text-align: right; }
 
     .mode-badge {
       display: inline-flex;
@@ -450,10 +407,7 @@
       transition: all 0.2s;
     }
 
-    .copy-btn:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
+    .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
 
     .sql-code {
       padding: 14px 16px;
@@ -497,15 +451,9 @@
       border-radius: 100px;
     }
 
-    .table-wrap {
-      overflow-x: auto;
-    }
+    .table-wrap { overflow-x: auto; }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
 
     thead tr {
       background: var(--bg3);
@@ -532,9 +480,7 @@
       white-space: nowrap;
     }
 
-    tbody tr:last-child td {
-      border-bottom: none;
-    }
+    tbody tr:last-child td { border-bottom: none; }
 
     .explanation {
       font-size: 13.5px;
@@ -561,26 +507,12 @@
       animation: dotPulse 1.4s ease-in-out infinite;
     }
 
-    .dot:nth-child(2) {
-      animation-delay: 0.2s;
-    }
-
-    .dot:nth-child(3) {
-      animation-delay: 0.4s;
-    }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
 
     @keyframes dotPulse {
-
-      0%,
-      100% {
-        opacity: 0.3;
-        transform: scale(1);
-      }
-
-      50% {
-        opacity: 1;
-        transform: scale(1.3);
-      }
+      0%, 100% { opacity: 0.3; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.3); }
     }
 
     .input-area {
@@ -620,9 +552,7 @@
       line-height: 1.5;
     }
 
-    #userInput::placeholder {
-      color: var(--text-muted);
-    }
+    #userInput::placeholder { color: var(--text-muted); }
 
     .send-btn {
       width: 40px;
@@ -639,25 +569,10 @@
       color: #080c10;
     }
 
-    .send-btn:hover {
-      background: var(--accent2);
-      transform: scale(1.05);
-    }
-
-    .send-btn:active {
-      transform: scale(0.96);
-    }
-
-    .send-btn:disabled {
-      background: var(--border2);
-      cursor: not-allowed;
-      transform: none;
-    }
-
-    .send-btn svg {
-      width: 18px;
-      height: 18px;
-    }
+    .send-btn:hover { background: var(--accent2); transform: scale(1.05); }
+    .send-btn:active { transform: scale(0.96); }
+    .send-btn:disabled { background: var(--border2); cursor: not-allowed; transform: none; }
+    .send-btn svg { width: 18px; height: 18px; }
 
     .input-hint {
       font-family: var(--font-mono);
@@ -667,11 +582,7 @@
       text-align: center;
     }
 
-    .form-row {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
+    .form-row { display: flex; gap: 12px; margin-bottom: 12px; }
 
     .form-group {
       flex: 1;
@@ -700,9 +611,7 @@
       width: 100%;
     }
 
-    .form-control:focus {
-      border-color: var(--accent);
-    }
+    .form-control:focus { border-color: var(--accent); }
 
     .modal-overlay {
       position: fixed;
@@ -733,11 +642,7 @@
       margin-bottom: 20px;
     }
 
-    .modal-title {
-      font-size: 18px;
-      font-weight: 800;
-      color: #fff;
-    }
+    .modal-title { font-size: 18px; font-weight: 800; color: #fff; }
 
     .modal-close {
       background: none;
@@ -747,9 +652,7 @@
       cursor: pointer;
     }
 
-    .modal-close:hover {
-      color: var(--text);
-    }
+    .modal-close:hover { color: var(--text); }
 
     .btn-primary {
       background: var(--accent);
@@ -765,9 +668,7 @@
       transition: all 0.2s;
     }
 
-    .btn-primary:hover {
-      background: var(--accent2);
-    }
+    .btn-primary:hover { background: var(--accent2); }
 
     .icon-btn {
       width: 36px;
@@ -840,63 +741,101 @@
     <div class="modal">
       <div class="modal-header">
         <h3 class="modal-title">Connect Database</h3>
-        <button class="modal-close" onclick="closeConnModal()">×</button>
+        <button class="modal-close" onclick="closeConnModal()">&times;</button>
       </div>
 
-      <div class="form-group" style="margin-bottom: 12px;">
-        <label>Engine</label>
-        <select class="form-control" id="connType" onchange="toggleConnFields()">
-          <option value="postgres">PostgreSQL</option>
-          <option value="mysql">MySQL</option>
-          <option value="mssql">SQL Server (MSSQL)</option>
-          <option value="oracle">Oracle</option>
-          <option value="sqlite">SQLite</option>
-        </select>
+      <!-- Connection Mode Tabs -->
+      <div style="display: flex; gap: 0; margin-bottom: 16px; border-bottom: 1px solid var(--border);">
+        <button id="tabServerDetails" onclick="switchConnTab('details')"
+          style="flex:1; padding: 10px 16px; background: var(--accent-dim); color: var(--accent); border: none; border-bottom: 2px solid var(--accent); cursor: pointer; font-family: var(--font-ui); font-size: 13px; font-weight: 600;">
+          Server Details
+        </button>
+        <button id="tabConnString" onclick="switchConnTab('string')"
+          style="flex:1; padding: 10px 16px; background: transparent; color: var(--text-dim); border: none; border-bottom: 2px solid transparent; cursor: pointer; font-family: var(--font-ui); font-size: 13px; font-weight: 600;">
+          Connection String
+        </button>
       </div>
 
-      <div id="connStandardFields">
-        <div class="form-row">
-          <div class="form-group">
-            <label>Host / IP Address</label>
-            <input type="text" class="form-control" id="connHost" value="localhost" />
-          </div>
-          <div class="form-group" style="flex: 0.5;">
-            <label>Port</label>
-            <input type="number" class="form-control" id="connPort" value="5432" />
-          </div>
-        </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Database</label>
-          <input type="text" class="form-control" id="connDb" placeholder="mydb" />
-        </div>
-      </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label>Username</label>
-            <input type="text" class="form-control" id="connUser" placeholder="postgres" />
-          </div>
-          <div class="form-group">
-            <label>Password</label>
-            <input type="password" class="form-control" id="connPass" />
-          </div>
-        </div>
-
+      <!-- Tab 1: Server Details -->
+      <div id="connDetailsPanel">
         <div class="form-group" style="margin-bottom: 12px;">
-          <label>SSL Mode (Optional)</label>
-          <input type="text" class="form-control" id="connSsl" placeholder="disable, require, etc." />
+          <label>Engine</label>
+          <select class="form-control" id="connType" onchange="toggleConnFields()">
+            <option value="postgres">PostgreSQL</option>
+            <option value="mysql">MySQL</option>
+            <option value="mssql">SQL Server (MSSQL)</option>
+            <option value="oracle">Oracle</option>
+            <option value="sqlite">SQLite</option>
+          </select>
+        </div>
+
+        <div id="connStandardFields">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Host / IP Address</label>
+              <input type="text" class="form-control" id="connHost" value="localhost" />
+            </div>
+            <div class="form-group" style="flex: 0.5;">
+              <label>Port</label>
+              <input type="number" class="form-control" id="connPort" value="5432" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Database</label>
+              <input type="text" class="form-control" id="connDb" placeholder="mydb" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Username</label>
+              <input type="text" class="form-control" id="connUser" placeholder="postgres" />
+            </div>
+            <div class="form-group">
+              <label>Password</label>
+              <input type="password" class="form-control" id="connPass" />
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label>SSL Mode (Optional)</label>
+            <input type="text" class="form-control" id="connSsl" placeholder="disable, require, etc." />
+          </div>
         </div>
       </div>
 
-      <div class="form-group" style="margin-bottom: 16px;">
-        <label>Or Connection String (Any Format)</label>
-        <input type="text" class="form-control" id="connString"
-          placeholder="e.g., postgresql://user:pass@host/db OR Data Source=host;Database=db;User ID=user;Password=pass" />
-        <small style="color: var(--text-dim); font-size: 11px;">Supports: SQLAlchemy URL, ADO.NET, ODBC, JDBC, key=value
-          pairs</small>
+      <!-- Tab 2: Connection String -->
+      <div id="connStringPanel" style="display: none;">
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label>Database Engine (for type hint)</label>
+          <select class="form-control" id="connStringType">
+            <option value="postgres">PostgreSQL</option>
+            <option value="mysql">MySQL</option>
+            <option value="mssql">SQL Server (MSSQL)</option>
+            <option value="oracle">Oracle</option>
+            <option value="sqlite">SQLite</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 8px;">
+          <label>Connection String</label>
+          <textarea class="form-control" id="connString" rows="3"
+            style="resize: vertical; min-height: 60px; font-family: var(--font-mono); font-size: 12px;"
+            placeholder="Paste any connection string format here..."></textarea>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <small style="color: var(--text-dim); font-size: 11px; line-height: 1.6;">
+            <strong>Supported formats:</strong><br>
+            <span style="color: var(--blue);">SQLAlchemy:</span> postgresql://user:pass@host:5432/db<br>
+            <span style="color: var(--blue);">ADO.NET:</span> Data Source=host,1433;Initial Catalog=db;User ID=user;Password=pass<br>
+            <span style="color: var(--blue);">ODBC:</span> Driver={ODBC Driver 17 for SQL Server};Server=host;Database=db;UID=user;PWD=pass<br>
+            <span style="color: var(--blue);">JDBC:</span> jdbc:postgresql://host:5432/db?user=xxx&amp;password=xxx<br>
+            <span style="color: var(--blue);">Key-Value:</span> host=host;port=5432;database=db;user=user;password=pass
+          </small>
+        </div>
       </div>
 
+      <!-- Common options -->
       <div class="form-group" style="margin-bottom: 16px;">
         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
           <input type="checkbox" id="connTestConnection" checked style="width: auto;" />
@@ -916,61 +855,114 @@
     const connModal = document.getElementById('connModal');
     const addConnBtn = document.getElementById('addConnBtn');
 
-    // ✅ This is the key: keep the active DB session id here
     let dbSessionId = null;
 
     addConnBtn.addEventListener('click', () => {
       connModal.style.display = 'flex';
     });
 
+    let activeConnTab = 'details';
+
     function closeConnModal() {
       connModal.style.display = 'none';
+    }
+
+    function switchConnTab(tab) {
+      if (tab === activeConnTab) return;
+      activeConnTab = tab;
+
+      const detailsPanel = document.getElementById('connDetailsPanel');
+      const stringPanel  = document.getElementById('connStringPanel');
+      const tabDetails   = document.getElementById('tabServerDetails');
+      const tabString    = document.getElementById('tabConnString');
+
+      if (tab === 'details') {
+        detailsPanel.style.display = 'block';
+        stringPanel.style.display  = 'none';
+        tabDetails.style.background    = 'var(--accent-dim)';
+        tabDetails.style.color         = 'var(--accent)';
+        tabDetails.style.borderBottom  = '2px solid var(--accent)';
+        tabString.style.background     = 'transparent';
+        tabString.style.color          = 'var(--text-dim)';
+        tabString.style.borderBottom   = '2px solid transparent';
+      } else {
+        detailsPanel.style.display = 'none';
+        stringPanel.style.display  = 'block';
+        tabString.style.background     = 'var(--accent-dim)';
+        tabString.style.color          = 'var(--accent)';
+        tabString.style.borderBottom   = '2px solid var(--accent)';
+        tabDetails.style.background    = 'transparent';
+        tabDetails.style.color         = 'var(--text-dim)';
+        tabDetails.style.borderBottom  = '2px solid transparent';
+      }
     }
 
     function toggleConnFields() {
       const type = document.getElementById('connType').value;
       const stdFields = document.getElementById('connStandardFields');
+      const portInput = document.getElementById('connPort');
 
       if (type === 'sqlite') {
         stdFields.style.opacity = '0.5';
         document.getElementById('connHost').disabled = true;
-        document.getElementById('connPort').disabled = true;
+        portInput.disabled = true;
         document.getElementById('connUser').disabled = true;
         document.getElementById('connPass').disabled = true;
         document.getElementById('connDb').placeholder = "Path to .db or .sqlite file";
       } else {
         stdFields.style.opacity = '1';
         document.getElementById('connHost').disabled = false;
-        document.getElementById('connPort').disabled = false;
+        portInput.disabled = false;
         document.getElementById('connUser').disabled = false;
         document.getElementById('connPass').disabled = false;
         document.getElementById('connDb').placeholder = "mydb";
+
+        if (type === 'mssql')       portInput.value = 1433;
+        else if (type === 'oracle') portInput.value = 1521;
+        else if (type === 'mysql')  portInput.value = 3306;
+        else                        portInput.value = 5432;
+
+        if (type === 'mssql')       document.getElementById('connUser').placeholder = 'sa';
+        else if (type === 'oracle') document.getElementById('connUser').placeholder = 'system';
+        else if (type === 'mysql')  document.getElementById('connUser').placeholder = 'root';
+        else                        document.getElementById('connUser').placeholder = 'postgres';
       }
     }
 
     async function submitConnection() {
-      const payload = { 
-        db_type: document.getElementById('connType').value,
-        test_connection: document.getElementById('connTestConnection')?.checked ?? true
-      };
-      const connStr = document.getElementById('connString').value.trim();
+      const testConn = document.getElementById('connTestConnection')?.checked ?? true;
+      let payload = { test_connection: testConn };
 
-      if (connStr) {
-        payload.connection_string = connStr;
+      if (activeConnTab === 'string') {
+        // Connection String tab
+        const connStr = document.getElementById('connString').value.trim();
+        if (!connStr) {
+          alert('Please enter a connection string.');
+          return;
+        }
+        payload = {
+          ...payload,
+          db_type: document.getElementById('connStringType').value,
+          connection_string: connStr,
+        };
       } else {
-        const dbType = payload.db            
+        // Server Details tab
+        const dbType = document.getElementById('connType').value;
+        payload = { ...payload, db_type: dbType };
+
         if (dbType !== 'sqlite') {
           payload.host = document.getElementById('connHost').value.trim();
-          // Get default port based on database type
+
           let defaultPort = 5432;
-          if (dbType === 'mssql') defaultPort = 1433;
-          else if (dbType === 'mysql') defaultPort = 3306;
+          if (dbType === 'mssql')       defaultPort = 1433;
+          else if (dbType === 'mysql')  defaultPort = 3306;
           else if (dbType === 'oracle') defaultPort = 1521;
-          
-          payload.port = parseInt(document.getElementById('connPort').value, 10) || defaultPort;
+
+          payload.port     = parseInt(document.getElementById('connPort').value, 10) || defaultPort;
           payload.database = document.getElementById('connDb').value.trim();
           payload.username = document.getElementById('connUser').value.trim();
           payload.password = document.getElementById('connPass').value;
+
           const ssl = document.getElementById('connSsl').value.trim();
           if (ssl) payload.sslmode = ssl;
         } else {
@@ -980,7 +972,10 @@
 
       closeConnModal();
       hideWelcome();
-      appendBotResponse({ type: "CHAT", answer: `🔌 Connecting to ${payload.db_type}...` });
+      appendBotResponse({
+        type: "CHAT",
+        answer: `🔌 Connecting to ${payload.db_type}${payload.connection_string ? ' via connection string' : ''}...`
+      });
 
       try {
         const res = await fetch(`${getBackendUrl()}/api/v1/db/source/connect`, {
@@ -992,7 +987,6 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
 
-        // ✅ store session id
         dbSessionId = data.db_session_id || null;
 
         appendBotResponse({
@@ -1052,8 +1046,6 @@
         }
 
         const out = await res.json();
-
-        // ✅ store session id
         dbSessionId = out.db_session_id || null;
 
         appendBotResponse({
@@ -1075,21 +1067,21 @@
     });
 
     async function checkHealth() {
-      const dot = document.getElementById('statusDot');
+      const dot   = document.getElementById('statusDot');
       const label = document.getElementById('statusLabel');
 
       try {
         const r = await fetch(`${getBackendUrl()}/api/v1/health`, { signal: AbortSignal.timeout(4000) });
         const d = await r.json();
         if (d.status === 'ok') {
-          dot.className = 'status-dot';
+          dot.className    = 'status-dot';
           label.textContent = 'ONLINE';
         } else {
-          dot.className = 'status-dot offline';
+          dot.className    = 'status-dot offline';
           label.textContent = 'DEGRADED';
         }
       } catch {
-        dot.className = 'status-dot offline';
+        dot.className    = 'status-dot offline';
         label.textContent = 'OFFLINE';
       }
     }
@@ -1128,12 +1120,12 @@
       try {
         const payload = {
           message: text,
-          db_session_id: dbSessionId            
+          db_session_id: dbSessionId
         };
 
         const controller = new AbortController();
-        const timeoutMs = 180000;
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        const timeoutMs  = 180000;
+        const timeoutId  = setTimeout(() => controller.abort(), timeoutMs);
 
         const res = await fetch(`${getBackendUrl()}/api/v1/chat`, {
           method: 'POST',
@@ -1182,34 +1174,34 @@
     }
 
     function appendUserMessage(text) {
-      const ca = document.getElementById('chatArea');
+      const ca  = document.getElementById('chatArea');
       const div = document.createElement('div');
       div.className = 'message user';
       div.innerHTML = `
-      <div class="avatar">👤</div>
-      <div class="bubble">
-        <div class="bubble-inner">${escHtml(text)}</div>
-        <div class="bubble-meta">${now()}</div>
-      </div>`;
+        <div class="avatar">👤</div>
+        <div class="bubble">
+          <div class="bubble-inner">${escHtml(text)}</div>
+          <div class="bubble-meta">${now()}</div>
+        </div>`;
       ca.appendChild(div);
       scrollToBottom();
     }
 
     function appendTyping() {
-      const ca = document.getElementById('chatArea');
-      const id = 'typing-' + Date.now();
+      const ca  = document.getElementById('chatArea');
+      const id  = 'typing-' + Date.now();
       const div = document.createElement('div');
       div.id = id;
       div.className = 'message bot';
       div.innerHTML = `
-      <div class="avatar">⚡</div>
-      <div class="bubble">
-        <div class="bubble-inner">
-          <div class="typing-indicator">
-            <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+        <div class="avatar">⚡</div>
+        <div class="bubble">
+          <div class="bubble-inner">
+            <div class="typing-indicator">
+              <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+            </div>
           </div>
-        </div>
-      </div>`;
+        </div>`;
       ca.appendChild(div);
       scrollToBottom();
       return id;
@@ -1220,24 +1212,24 @@
     }
 
     function appendBotError(msg) {
-      const ca = document.getElementById('chatArea');
+      const ca  = document.getElementById('chatArea');
       const div = document.createElement('div');
       div.className = 'message bot';
       div.innerHTML = `
-      <div class="avatar">⚡</div>
-      <div class="bubble">
-        <div class="bubble-inner">
-          <span class="mode-badge error">⚠ ERROR</span>
-          <div style="color:var(--red);font-family:var(--font-mono);font-size:13px;">${escHtml(msg)}</div>
-        </div>
-        <div class="bubble-meta">${now()}</div>
-      </div>`;
+        <div class="avatar">⚡</div>
+        <div class="bubble">
+          <div class="bubble-inner">
+            <span class="mode-badge error">⚠ ERROR</span>
+            <div style="color:var(--red);font-family:var(--font-mono);font-size:13px;">${escHtml(msg)}</div>
+          </div>
+          <div class="bubble-meta">${now()}</div>
+        </div>`;
       ca.appendChild(div);
       scrollToBottom();
     }
 
     function appendBotResponse(data) {
-      const ca = document.getElementById('chatArea');
+      const ca  = document.getElementById('chatArea');
       const div = document.createElement('div');
       div.className = 'message bot';
 
@@ -1260,6 +1252,7 @@
               </div>
               <div class="sql-code" id="${sqlId}">${escHtml(data.sql)}</div>
             </div>`;
+
           if (data.result && data.result.columns && data.result.columns.length > 0) {
             const cols = data.result.columns.map(c => `<th>${escHtml(c)}</th>`).join('');
             const rows = (data.result.rows || []).map(row =>
@@ -1276,7 +1269,8 @@
                     <thead><tr>${cols}</tr></thead>
                     <tbody>${rows}</tbody>
                   </table>
-                </div>`;
+                </div>
+              </div>`;
           }
 
           if (data.explanation) {
@@ -1286,7 +1280,6 @@
           if (data.error) {
             inner += `<div style="color:var(--red);font-family:var(--font-mono);font-size:12px;margin-top:10px;">⚠ ${escHtml(data.error)}</div>`;
           }
-
         }
       } else {
         inner = `
@@ -1295,11 +1288,11 @@
       }
 
       div.innerHTML = `
-      <div class="avatar">⚡</div>
-      <div class="bubble">
-        <div class="bubble-inner">${inner}</div>
-        <div class="bubble-meta">${now()}</div>
-      </div>`;
+        <div class="avatar">⚡</div>
+        <div class="bubble">
+          <div class="bubble-inner">${inner}</div>
+          <div class="bubble-meta">${now()}</div>
+        </div>`;
       ca.appendChild(div);
       scrollToBottom();
     }

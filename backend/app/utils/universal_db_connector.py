@@ -66,6 +66,7 @@ class ConnectionParams:
     username: Optional[str] = None
     password: Optional[str] = None
     driver: Optional[str] = None
+    provider: Optional[str] = None
     sslmode: Optional[str] = None
     trust_server_certificate: bool = True
     integrated_security: bool = False
@@ -261,18 +262,25 @@ class UniversalConnectionParser:
             key_mapping = {
                 "data source": "server",
                 "datasource": "server",
+                "addr": "server",
+                "address": "server",
+                "network address": "server",
                 "initial catalog": "database",
+                "dbname": "database",
                 "user id": "user",
                 "uid": "user",
-                "user id": "user",
+                "username": "user",
                 "password": "password",
+                "pwd": "password",
                 "port": "port",
                 "ssl mode": "sslmode",
                 "sslmode": "sslmode",
                 "trust server certificate": "trustservercertificate",
                 "trustservercertificate": "trustservercertificate",
                 "integrated security": "integratedsecurity",
+                "trusted_connection": "integratedsecurity",
                 "driver": "driver",
+                "provider": "provider",
             }
             
             key = key_mapping.get(key, key)
@@ -307,6 +315,9 @@ class UniversalConnectionParser:
         Returns:
             ConnectionParams object with parsed connection information
         """
+        # Reset _db_type for each parse call to avoid stale state
+        self._db_type = None
+        
         # If db_type is provided as string, convert to enum
         if db_type is not None:
             if isinstance(db_type, str):
@@ -330,13 +341,13 @@ class UniversalConnectionParser:
         if connection_string:
             conn_str = connection_string.strip()
             
+            # Check if it's a JDBC URL (must come before generic :// check)
+            if conn_str.lower().startswith("jdbc:"):
+                return self._parse_jdbc_url(conn_str)
+            
             # Check if it's a SQLAlchemy URL
             if "://" in conn_str:
                 return self._parse_sqlalchemy_url(conn_str)
-            
-            # Check if it's a JDBC URL
-            if conn_str.lower().startswith("jdbc:"):
-                return self._parse_jdbc_url(conn_str)
             
             # Otherwise, parse as key-value string
             return self._parse_key_value(
@@ -400,6 +411,10 @@ class UniversalConnectionParser:
         # Extract query parameters
         query_params = dict(urllib.parse.parse_qsl(parsed.query))
         
+        # For Oracle, the database may be specified as service_name in query params
+        if (not database or database == "") and "service_name" in query_params:
+            database = query_params["service_name"]
+        
         # Handle SQLite file path
         if db_type == DatabaseType.SQLITE and database:
             if url.startswith("sqlite:///"):
@@ -425,29 +440,33 @@ class UniversalConnectionParser:
         url_lower = url.lower()
         
         # Determine database type from JDBC URL
-        if "oracle" in url_lower:
-            db_type = DatabaseType.ORACLE
-        elif "sqlserver" in url_lower or "sql" in url_lower:
-            db_type = DatabaseType.MSSQL
-        elif "mysql" in url_lower or "mariadb" in url_lower:
-            db_type = DatabaseType.MYSQL
+        # Use the db_type hint if provided, otherwise detect from URL
+        if self._db_type and self._db_type != DatabaseType.UNKNOWN:
+            db_type = self._db_type
         elif "postgres" in url_lower:
             db_type = DatabaseType.POSTGRESQL
+        elif "mysql" in url_lower or "mariadb" in url_lower:
+            db_type = DatabaseType.MYSQL
+        elif "oracle" in url_lower:
+            db_type = DatabaseType.ORACLE
+        elif "sqlserver" in url_lower:
+            db_type = DatabaseType.MSSQL
         else:
             db_type = DatabaseType.UNKNOWN
         
-        # Parse JDBC URL format: jdbc:subprotocol:subname
-        # e.g., jdbc:postgresql://host:port/database?user=xxx&password=xxx
-        parsed = urllib.parse.urlparse(url)
+        # Parse JDBC URL format: jdbc:subprotocol://host:port/database?user=xxx&password=xxx
+        # Strip the "jdbc:" prefix so urllib can parse the rest as a normal URL
+        stripped_url = re.sub(r'^jdbc:', '', url, flags=re.IGNORECASE)
+        parsed = urllib.parse.urlparse(stripped_url)
         
         host = parsed.hostname
         port = parsed.port
-        database = parsed.path.lstrip("/") if parsed.path else None
+        database = parsed.path.lstrip("/") if parsed.path else ""  # Oracle requires database name to be specified in path
         
         # Get username and password from query params
         query_params = dict(urllib.parse.parse_qsl(parsed.query))
-        username = query_params.get("user")
-        password = query_params.get("password")
+        username = query_params.pop("user", None)
+        password = query_params.pop("password", None)
         
         return ConnectionParams(
             db_type=db_type,
@@ -477,10 +496,11 @@ class UniversalConnectionParser:
         # Parse the key-value string
         params = self.parse_key_value_string(connection_string)
         
-        #_value_string(connection_string Override with explicitly provided parameters
-        host = host or params.get("server") or params.get("host")
+        # Override with explicitly provided parameters
+        raw_server = params.get("server") or params.get("host")
+        host = host or raw_server
         
-        # Handle port (could be in "port" key or embedded in server like "host,1433")
+        # Handle port (could be in "port" key or embedded in server like "host,1433" or "localhost,1433")
         if port:
             pass  # Use provided port
         elif "port" in params:
@@ -488,12 +508,24 @@ class UniversalConnectionParser:
                 port = int(params["port"])
             except (ValueError, TypeError):
                 pass
-        elif "server" in params and "," in params["server"]:
-            # Format: host,port
-            server_parts = params["server"].split(",")
+        elif raw_server and "," in raw_server:
+            # Format: host,port (SQL Server style)
+            server_parts = raw_server.split(",")
             if len(server_parts) > 1:
                 try:
                     port = int(server_parts[1].strip())
+                    # Also fix the host to remove the port part
+                    host = server_parts[0].strip()
+                except (ValueError, TypeError):
+                    pass
+        
+        # Ensure host doesn't contain embedded port (e.g. "localhost,1433")
+        if host and "," in host:
+            parts = host.split(",")
+            host = parts[0].strip()
+            if not port and len(parts) > 1:
+                try:
+                    port = int(parts[1].strip())
                 except (ValueError, TypeError):
                     pass
         
