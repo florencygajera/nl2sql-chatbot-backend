@@ -143,7 +143,7 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
     if parsed["Integrated_Security"]:
         odbc_parts.append("Trusted_Connection=yes")
         odbc_str = ";".join(odbc_parts) + ";"
-        sqlalchemy_url = f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote_plus(odbc_str)}"
+        sqlalchemy_url = f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote(odbc_str, safe='')}"
         return parsed, sqlalchemy_url
 
     # Require username and password for SQL Authentication
@@ -155,7 +155,7 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
     odbc_parts.append(f"UID={parsed['username']}")
     odbc_parts.append(f"PWD={parsed['password']}")
     odbc_str = ";".join(odbc_parts) + ";"
-    sqlalchemy_url = f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote_plus(odbc_str)}"
+    sqlalchemy_url = f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote(odbc_str, safe='')}"
 
     return parsed, sqlalchemy_url
 

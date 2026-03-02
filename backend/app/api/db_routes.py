@@ -150,7 +150,7 @@ def build_database_url(
             "Connection Timeout=60",
         ]
         odbc_str = ";".join(odbc_parts) + ";"
-        return f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote_plus(odbc_str)}"
+        return f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote(odbc_str, safe='')}"
 
     if db_type == "oracle":
         url = f"oracle+oracledb://{username}:{password}@{host}:{port}/?service_name={database}"
@@ -253,7 +253,11 @@ def connect_db(payload: DBConnectRequest):
 
         import logging
         logger = logging.getLogger(__name__)
-        logger.warning("CONNECT_DB resolved SQLAlchemy URL (masked) = %s", url.replace(payload.password or "", "***"))
+        safe_url = url.replace(payload.password or "", "***") if payload.password else url
+        logger.warning("CONNECT_DB: url_type=%s has_odbc=%s url_start=%s",
+                       "odbc_connect" if "odbc_connect" in url else "standard",
+                       "yes" if "odbc_connect" in url else "no",
+                       safe_url[:80])
 
         # Step 2: set_database_url does ONE connection test internally (SELECT 1)
         # This is the ONLY place we actually connect to the remote DB.

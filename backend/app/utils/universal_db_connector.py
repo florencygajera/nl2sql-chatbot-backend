@@ -588,11 +588,11 @@ class UniversalConnectionParser:
             odbc_parts.append(f"PWD={params.password or ''}")
 
         odbc_str = ";".join(odbc_parts) + ";"
-        return f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
+        return f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote(odbc_str, safe='')}"
 
     def _build_postgresql_url(self, params: ConnectionParams) -> str:
-        username = quote_plus(params.username or "")
-        password = quote_plus(params.password or "")
+        username = urllib.parse.quote(params.username or "", safe='')
+        password = urllib.parse.quote(params.password or "", safe='')
         host = params.host or "localhost"
         port = params.port or 5432
         database = params.database or ""
