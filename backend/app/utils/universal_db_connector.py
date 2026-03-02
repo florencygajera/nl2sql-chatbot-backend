@@ -752,64 +752,75 @@ class UniversalConnectionManager:
             return False, f"Connection failed: {str(e)}"
 
     def connect(
-        self,
-        connection_string: Optional[str] = None,
-        db_type: Optional[str] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        database: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        test_connection: bool = True,
-        timeout: int = 10,
+    self,
+    connection_string: Optional[str] = None,
+    db_type: Optional[str] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    database: Optional[str] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    test_connection: bool = True,
+    timeout: int = 10,
+    **kwargs
+) -> Tuple[Engine, ConnectionParams]:
+
+    params = self.parse_and_validate(
+    connection_string=connection_string,
+    db_type=db_type,
+     host=host,
+        port=port,
+        database=database,
+        username=username,
+        password=password,
         **kwargs
-    ) -> Tuple[Engine, ConnectionParams]:
-        params = self.parse_and_validate(
-            connection_string=connection_string,
-            db_type=db_type,
-            host=host,
-            port=port,
-            database=database,
-            username=username,
-            password=password,
-            **kwargs
-        )
+    )
 
-        if test_connection:
-            success, message = self.test_connection(params, timeout)
-            if not success:
-                raise ConnectionError(message)
+    if test_connection:
+        success, message = self.test_connection(params, timeout)
+        if not success:
+            raise ConnectionError(message)
 
-        url = self.parser.to_sqlalchemy_url(params)
+    url = self.parser.to_sqlalchemy_url(params)
 
-        engine_options: Dict[str, Any] = {
-            "pool_pre_ping": True,
-            "echo": False,
-        }
+    engine_options: Dict[str, Any] = {
+        "pool_pre_ping": True,
+        "echo": False,
+    }
 
-        if params.db_type != DatabaseType.SQLITE:
-            engine_options.update({
-                "pool_size": 5,
-                "max_overflow": 10,
-                "pool_timeout": 30,
-                "pool_recycle": 1800,
-            })
-
-            # Keep existing options for Postgres; MSSQL gets a safe timeout key
-            if params.db_type == DatabaseType.MSSQL:
-                engine_options["connect_args"] = {"timeout": timeout}
-            else:
-                engine_options["connect_args"] = {
-                    "connect_timeout": timeout,
-                    "options": "-c statement_timeout=30000"
-                }
-        else:
-            engine_options["connect_args"] = {"check_same_thread": False}
-
+    if params.db_type == DatabaseType.SQLITE:
+        engine_options["connect_args"] = {"check_same_thread": False}
         self._engine = create_engine(url, **engine_options)
         self._current_params = params
-
         return self._engine, params
+
+    # Pool settings for server DBs
+    engine_options.update({
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_timeout": 30,
+        "pool_recycle": 1800,
+    })
+
+    # ✅ DB-specific connect_args (IMPORTANT)
+    if params.db_type == DatabaseType.MSSQL:
+        # pyodbc expects 'timeout'
+        engine_options["connect_args"] = {"timeout": timeout}
+
+    elif params.db_type == DatabaseType.POSTGRESQL:
+        engine_options["connect_args"] = {
+            "connect_timeout": timeout,
+            "options": "-c statement_timeout=30000",
+        }
+
+    else:
+        # MySQL/others: do NOT pass postgres 'options'
+        engine_options["connect_args"] = {"connect_timeout": timeout}
+
+    self._engine = create_engine(url, **engine_options)
+    self._current_params = params
+
+    return self._engine, params
 
     def disconnect(self) -> None:
         if self._engine:
