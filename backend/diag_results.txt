@@ -1,0 +1,17 @@
+STEP 1: Parse connection string -> URL
+[OK] parse: 0.00s
+  URL: mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BODBC+Driver+17+for+SQL+Serve...
+  uses odbc_connect: True
+
+STEP 2: Raw SQLAlchemy connect
+[OK] raw SQLAlchemy: 0.56s
+
+STEP 3: set_database_url (1 internal SELECT 1 test)
+[OK] set_database_url: 0.23s
+
+STEP 4: get_schema_summary
+[OK] get_schema_summary: 0.30s
+  Tables: 89
+
+STEP 5: reset_database_url (back to SQLite)
+[OK] reset_database_url: 0.03s

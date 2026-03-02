@@ -227,33 +227,95 @@ def get_current_dialect() -> str:
 
 
 def get_schema_summary() -> str:
-    inspector = inspect(engine)
-    lines: list[str] = []
-
+    """
+    Fetch schema exactly once using a single SQL query (no N+1 inspector calls).
+    
+    Uses INFORMATION_SCHEMA.COLUMNS for MSSQL/PostgreSQL/MySQL (one round trip),
+    and falls back to SQLAlchemy inspector for SQLite.
+    """
+    dialect = active_db_info.get("dialect", "unknown")
     ignore_cols = {"insertedby", "inserteddatetime", "updatedby", "updateddatetime"}
-    ignore_tables = {"__EFMigrationsHistory"}
+    ignore_tables = {"__efmigrationshistory", "sysdiagrams"}
 
+    # ── Single-query path for server databases ─────────────────────────────────
+    if dialect in ("mssql", "postgresql", "mysql"):
+        if dialect == "mssql":
+            sql = text("""
+                SELECT
+                    t.TABLE_NAME,
+                    c.COLUMN_NAME,
+                    c.DATA_TYPE
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN INFORMATION_SCHEMA.COLUMNS c
+                    ON c.TABLE_NAME = t.TABLE_NAME
+                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
+            """)
+        elif dialect == "postgresql":
+            sql = text("""
+                SELECT
+                    t.table_name AS TABLE_NAME,
+                    c.column_name AS COLUMN_NAME,
+                    c.data_type AS DATA_TYPE
+                FROM information_schema.tables t
+                JOIN information_schema.columns c
+                    ON c.table_name = t.table_name
+                    AND c.table_schema = t.table_schema
+                WHERE t.table_type = 'BASE TABLE'
+                  AND t.table_schema = 'public'
+                ORDER BY t.table_name, c.ordinal_position
+            """)
+        else:  # mysql
+            sql = text("""
+                SELECT
+                    t.TABLE_NAME,
+                    c.COLUMN_NAME,
+                    c.DATA_TYPE
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN INFORMATION_SCHEMA.COLUMNS c
+                    ON c.TABLE_NAME = t.TABLE_NAME
+                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                  AND t.TABLE_SCHEMA = DATABASE()
+                ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
+            """)
+
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(sql).fetchall()
+
+            lines: list[str] = []
+            current_table = None
+            for table_name, col_name, data_type in rows:
+                if table_name.lower() in ignore_tables:
+                    continue
+                if col_name.lower() in ignore_cols:
+                    continue
+                if table_name != current_table:
+                    if current_table is not None:
+                        lines.append("")
+                    lines.append(f'Table: "{table_name}"')
+                    current_table = table_name
+                lines.append(f'  - "{col_name}" ({data_type})')
+            return "\n".join(lines).strip()
+
+        except Exception as e:
+            logger.warning("Fast schema query failed (%s), falling back to inspector", e)
+            # Fall through to inspector below
+
+    # ── SQLite (and fallback) path ─────────────────────────────────────────────
+    inspector = inspect(engine)
+    lines = []
     for table_name in inspector.get_table_names():
-        if table_name in ignore_tables:
+        if table_name.lower() in ignore_tables:
             continue
-
         lines.append(f'Table: "{table_name}"')
         for col in inspector.get_columns(table_name):
             if col['name'].lower() in ignore_cols:
                 continue
             lines.append(f'  - "{col["name"]}" ({col["type"]})')
-
-        try:
-            for fk in inspector.get_foreign_keys(table_name):
-                lines.append(
-                    f'  FK: "{fk["constrained_columns"][0]}" -> '
-                    f'"{fk["referred_table"]}"."{fk["referred_columns"][0]}"'
-                )
-        except Exception:
-            pass  # Some DBs may not support FK introspection easily
-
         lines.append("")
-
     return "\n".join(lines).strip()
 
 
