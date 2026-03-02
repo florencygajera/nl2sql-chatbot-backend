@@ -23,17 +23,30 @@ from app.db.session import (
     ping_database
 )
 
+# Import universal connection module
+from app.utils.universal_db_connector import (
+    UniversalConnectionManager,
+    ConnectionStringError,
+    ConnectionError,
+    DatabaseType,
+    test_connection as universal_test_connection,
+)
+
 router = APIRouter(prefix="/db", tags=["db"])
 
 UPLOAD_DIR = Path("uploaded_db_files")
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
 
-DbType = Literal["postgres", "mysql", "sqlite", "mssql"]
+# Extended DbType to include Oracle
+DbType = Literal["postgres", "mysql", "sqlite", "mssql", "oracle"]
 
 AllowedUploadExt = {".sql", ".dump", ".backup", ".tar", ".gz", ".sqlite", ".db", ".bak"}
 
 
 from app.utils.sqlserver_conn_parser import parse_sqlserver_connection_string as _parse_mssql_conn_str
+
+# Global connection manager instance
+_connection_manager = UniversalConnectionManager()
 
 
 def build_database_url(
@@ -46,6 +59,38 @@ def build_database_url(
     password: str | None,
     sslmode: str | None = None,
 ) -> str:
+    """
+    Build database URL using universal connection parser.
+    
+    This function supports:
+    - Full server details (host, port, database, username, password)
+    - Direct connection strings in any format (ADO.NET, ODBC, JDBC, SQLAlchemy)
+    - All supported database types (PostgreSQL, MySQL, MSSQL, SQLite, Oracle)
+    """
+    
+    # If connection_string is provided, try to parse it with universal connector
+    if connection_string:
+        try:
+            # Use universal connector for parsing
+            params = _connection_manager.parse_and_validate(
+                connection_string=connection_string,
+                db_type=db_type,
+                host=host,
+                port=port,
+                database=database,
+                username=username,
+                password=password,
+                sslmode=sslmode,
+            )
+            return _connection_manager.parser.to_sqlalchemy_url(params)
+        except ConnectionStringError:
+            # Fall back to legacy parsing for backwards compatibility
+            pass
+        except Exception:
+            # Fall back to legacy parsing
+            pass
+    
+    # Fallback to original logic if universal parser fails or no connection string
     # If connection_string is provided and db_type is mssql, parse and convert it
     if connection_string and db_type == "mssql":
         # Try to detect if it's a SQL Server format (has Data Source, Initial Catalog, etc.)
@@ -94,6 +139,10 @@ def build_database_url(
         trust_cert = "yes"  # Default to yes for convenience
         url = f"mssql+pyodbc://{username}:{password}@{host}:{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}"
         return url
+    
+    if db_type == "oracle":
+        url = f"oracle+oracledb://{username}:{password}@{host}:{port}/?service_name={database}"
+        return url
 
     raise ValueError("Unsupported db_type")
 
@@ -132,6 +181,7 @@ class DBConnectRequest(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     sslmode: Optional[str] = Field(default=None, description="disable|require|verify-ca|verify-full")
+    test_connection: bool = Field(default=True, description="Test connection before establishing")
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -141,6 +191,8 @@ class DBConnectRequest(BaseModel):
                 self.port = 1433
             elif self.db_type == "mysql":
                 self.port = 3306
+            elif self.db_type == "oracle":
+                self.port = 1521
             else:
                 self.port = 5432
 
@@ -148,16 +200,54 @@ class DBConnectRequest(BaseModel):
 @router.post("/connect")
 def connect_db(payload: DBConnectRequest):
     try:
-        url = build_database_url(
-            connection_string=payload.connection_string,
-            db_type=payload.db_type,
-            host=payload.host,
-            port=payload.port,
-            database=payload.database,
-            username=payload.username,
-            password=payload.password,
-            sslmode=payload.sslmode,
-        )
+        # First, validate and optionally test the connection
+        if payload.connection_string:
+            # Try universal connector first
+            try:
+                # Parse parameters
+                params = _connection_manager.parse_and_validate(
+                    connection_string=payload.connection_string,
+                    db_type=payload.db_type,
+                    host=payload.host,
+                    port=payload.port,
+                    database=payload.database,
+                    username=payload.username,
+                    password=payload.password,
+                    sslmode=payload.sslmode,
+                )
+                
+                # Test connection if requested
+                if payload.test_connection:
+                    success, message = _connection_manager.test_connection(params, timeout=10)
+                    if not success:
+                        raise HTTPException(status_code=400, detail=message)
+                    
+                # Get SQLAlchemy URL
+                url = _connection_manager.parser.to_sqlalchemy_url(params)
+            except ConnectionStringError as e:
+                if payload.test_connection:
+                    raise HTTPException(status_code=400, detail=str(e))
+                # If not testing, continue with original logic
+                url = None
+            except Exception as e:
+                if payload.test_connection:
+                    raise HTTPException(status_code=400, detail=str(e))
+                url = None
+        else:
+            url = None
+        
+        # Fallback to original logic if URL not set
+        if url is None:
+            url = build_database_url(
+                connection_string=payload.connection_string,
+                db_type=payload.db_type,
+                host=payload.host,
+                port=payload.port,
+                database=payload.database,
+                username=payload.username,
+                password=payload.password,
+                sslmode=payload.sslmode,
+            )
         set_database_url(url)
         set_database_source(
             attach_mode="CONNECTION",
@@ -180,6 +270,8 @@ def connect_db(payload: DBConnectRequest):
             "database_url": url,
             "schema": schema,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

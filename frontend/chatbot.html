@@ -848,6 +848,8 @@
         <select class="form-control" id="connType" onchange="toggleConnFields()">
           <option value="postgres">PostgreSQL</option>
           <option value="mysql">MySQL</option>
+          <option value="mssql">SQL Server (MSSQL)</option>
+          <option value="oracle">Oracle</option>
           <option value="sqlite">SQLite</option>
         </select>
       </div>
@@ -888,8 +890,18 @@
       </div>
 
       <div class="form-group" style="margin-bottom: 16px;">
-        <label>Or Connection String</label>
-        <input type="text" class="form-control" id="connString" placeholder="postgresql+psycopg2://user:pass@host/db" />
+        <label>Or Connection String (Any Format)</label>
+        <input type="text" class="form-control" id="connString"
+          placeholder="e.g., postgresql://user:pass@host/db OR Data Source=host;Database=db;User ID=user;Password=pass" />
+        <small style="color: var(--text-dim); font-size: 11px;">Supports: SQLAlchemy URL, ADO.NET, ODBC, JDBC, key=value
+          pairs</small>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+          <input type="checkbox" id="connTestConnection" checked style="width: auto;" />
+          <span>Test connection before connecting</span>
+        </label>
       </div>
 
       <button class="btn-primary" onclick="submitConnection()">Connect</button>
@@ -937,15 +949,25 @@
     }
 
     async function submitConnection() {
-      const payload = { db_type: document.getElementById('connType').value };
+      const payload = { 
+        db_type: document.getElementById('connType').value,
+        test_connection: document.getElementById('connTestConnection')?.checked ?? true
+      };
       const connStr = document.getElementById('connString').value.trim();
 
       if (connStr) {
         payload.connection_string = connStr;
       } else {
-        if (payload.db_type !== 'sqlite') {
+        const dbType = payload.db            
+        if (dbType !== 'sqlite') {
           payload.host = document.getElementById('connHost').value.trim();
-          payload.port = parseInt(document.getElementById('connPort').value, 10) || (payload.db_type === 'postgres' ? 5432 : 3306);
+          // Get default port based on database type
+          let defaultPort = 5432;
+          if (dbType === 'mssql') defaultPort = 1433;
+          else if (dbType === 'mysql') defaultPort = 3306;
+          else if (dbType === 'oracle') defaultPort = 1521;
+          
+          payload.port = parseInt(document.getElementById('connPort').value, 10) || defaultPort;
           payload.database = document.getElementById('connDb').value.trim();
           payload.username = document.getElementById('connUser').value.trim();
           payload.password = document.getElementById('connPass').value;
