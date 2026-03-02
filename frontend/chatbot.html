@@ -966,12 +966,19 @@
       try {
         const payload = { message: text };
 
+        // Create abort controller for manual cancellation + timeout
+        const controller = new AbortController();
+        const timeoutMs = 60000; // 60 second timeout - more reasonable for chatbot
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
         const res = await fetch(`${getBackendUrl()}/api/v1/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(300000),
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
 
         removeTyping(typingId);
 
@@ -986,7 +993,12 @@
 
       } catch (err) {
         removeTyping(typingId);
-        appendBotError(err?.message || 'Network error — is the backend running?');
+        // Check if the request was aborted (timeout or manual cancel)
+        if (err.name === 'AbortError') {
+          appendBotError('Request timed out. Please try again or simplify your query.');
+        } else {
+          appendBotError(err?.message || 'Network error — is the backend running?');
+        }
       } finally {
         document.getElementById('sendBtn').disabled = false;
         ta.focus();
