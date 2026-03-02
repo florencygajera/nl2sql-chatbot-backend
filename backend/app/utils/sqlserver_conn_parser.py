@@ -132,7 +132,6 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
         host_part = f"{host_part}:{parsed['port']}"
     
     # URL-encode special characters in username and password
-    import urllib.parse
     username = urllib.parse.quote_plus(parsed["username"])
     password = urllib.parse.quote_plus(parsed["password"])
     database = urllib.parse.quote_plus(parsed["database"])
