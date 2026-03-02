@@ -51,16 +51,40 @@ active_db_info = {
 def create_app_engine(url: str):
     kwargs = {"pool_pre_ping": True, "echo": settings.DEBUG}
     if not url.startswith("sqlite"):
-        kwargs.update({
-            "pool_size": settings.DB_POOL_SIZE,
-            "max_overflow": settings.DB_MAX_OVERFLOW,
-            "pool_timeout": settings.DB_POOL_TIMEOUT,
-            "pool_recycle": settings.DB_POOL_RECYCLE,
-            "connect_args": {
-                "connect_timeout": 10,  # Connection timeout in seconds
-                "options": "-c statement_timeout=30000"  # Query timeout in milliseconds
-            }
-        })
+        # Check if it's PostgreSQL - only add PostgreSQL-specific options
+        if "postgresql" in url:
+            kwargs.update({
+                "pool_size": settings.DB_POOL_SIZE,
+                "max_overflow": settings.DB_MAX_OVERFLOW,
+                "pool_timeout": settings.DB_POOL_TIMEOUT,
+                "pool_recycle": settings.DB_POOL_RECYCLE,
+                "connect_args": {
+                    "connect_timeout": 10,
+                    "options": "-c statement_timeout=30000"
+                }
+            })
+        elif "mssql" in url or "sqlserver" in url:
+            # SQL Server - use ODBC Driver 17 if available
+            kwargs.update({
+                "pool_size": settings.DB_POOL_SIZE,
+                "max_overflow": settings.DB_MAX_OVERFLOW,
+                "pool_timeout": settings.DB_POOL_TIMEOUT,
+                "pool_recycle": settings.DB_POOL_RECYCLE,
+                "connect_args": {
+                    "connect_timeout": 10,
+                }
+            })
+        else:
+            # Other databases (MySQL, etc.)
+            kwargs.update({
+                "pool_size": settings.DB_POOL_SIZE,
+                "max_overflow": settings.DB_MAX_OVERFLOW,
+                "pool_timeout": settings.DB_POOL_TIMEOUT,
+                "pool_recycle": settings.DB_POOL_RECYCLE,
+                "connect_args": {
+                    "connect_timeout": 10,
+                }
+            })
         logger.warning(
             "DB Pool Configuration - pool_size=%d, max_overflow=%d, pool_timeout=%d (seconds), pool_recycle=%d (seconds)",
             settings.DB_POOL_SIZE,

@@ -645,20 +645,19 @@ class UniversalConnectionParser:
     def _build_mssql_url(self, params: ConnectionParams) -> str:
         """Build MSSQL SQLAlchemy URL."""
         if params.integrated_security:
-            # Windows Authentication
+            # Windows Authentication - use ODBC Driver 17
             host_part = params.host
             if params.port:
                 host_part = f"{host_part},{params.port}"
             database = quote_plus(params.database or "")
-            trust_cert = "yes" if params.trust_server_certificate else "no"
             return (
                 f"mssql+pyodbc://{host_part}/{database}"
                 f"?driver=ODBC+Driver+17+for+SQL+Server"
-                f"&TrustServerCertificate={trust_cert}"
+                f"&TrustServerCertificate=yes"
                 f"&Trusted_Connection=yes"
             )
         else:
-            # SQL Server Authentication
+            # SQL Server Authentication - use ODBC Driver 17
             host_part = params.host
             if params.port:
                 host_part = f"{host_part},{params.port}"
@@ -667,13 +666,11 @@ class UniversalConnectionParser:
             password = quote_plus(params.password or "")
             database = quote_plus(params.database or "")
             
-            trust_cert = "yes" if params.trust_server_certificate else "no"
-            
-            # Build minimal URL to match what SSMS uses
+            # Use ODBC Driver 17 with proper settings
             return (
                 f"mssql+pyodbc://{username}:{password}@{host_part}/{database}"
                 f"?driver=ODBC+Driver+17+for+SQL+Server"
-                f"&TrustServerCertificate={trust_cert}"
+                f"&TrustServerCertificate=yes"
             )
     
     def _build_postgresql_url(self, params: ConnectionParams) -> str:

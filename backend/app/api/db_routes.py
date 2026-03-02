@@ -136,9 +136,8 @@ def build_database_url(
         return url
 
     if db_type == "mssql":
-        trust_cert = "yes"  # Default to yes for convenience
-        # Use comma for mssql+pyodbc host:port separator
-        url = f"mssql+pyodbc://{username}:{password}@{host},{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}"
+        # Use ODBC Driver 17 for SQL Server
+        url = f"mssql+pyodbc://{username}:{password}@{host},{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes"
         return url
     
     if db_type == "oracle":

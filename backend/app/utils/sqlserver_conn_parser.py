@@ -118,15 +118,13 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
         if parsed["port"]:
             host_part = f"{host_part},{parsed['port']}"
         database = urllib.parse.quote_plus(parsed["database"])
-        trust_cert = "yes" if parsed["TrustServerCertificate"] else "no"
-        return parsed, f"mssql+pyodbc://{host_part}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}&Integrated Security=SSPI"
+        return parsed, f"mssql+pyodbc://{host_part}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes&Trusted_Connection=yes"
     
     # Require username and password for pymssql
     if not parsed["username"] or not parsed["password"]:
         raise ValueError("Username and Password are required for SQL Server connection (Windows Authentication requires pyodbc).")
     
     # Build minimal SQLAlchemy URL using pyodbc driver
-    # Minimal URL format similar to SSMS
     host_part = parsed["host"]
     if parsed["port"]:
         host_part = f"{host_part},{parsed['port']}"
@@ -136,9 +134,8 @@ def parse_sqlserver_connection_string(connection_string: str) -> Tuple[Dict[str,
     password = urllib.parse.quote_plus(parsed["password"])
     database = urllib.parse.quote_plus(parsed["database"])
     
-    # Build minimal URL with pyodbc driver
-    trust_cert = "yes" if parsed["TrustServerCertificate"] else "no"
-    sqlalchemy_url = f"mssql+pyodbc://{username}:{password}@{host_part}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate={trust_cert}"
+    # Use ODBC Driver 17
+    sqlalchemy_url = f"mssql+pyodbc://{username}:{password}@{host_part}/{database}?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes"
     
     return parsed, sqlalchemy_url
 

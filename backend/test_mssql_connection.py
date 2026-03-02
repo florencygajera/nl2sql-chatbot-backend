@@ -1,46 +1,59 @@
 """
-Quick test script to debug MSSQL connection issues.
-Run this directly to see detailed error messages.
+Direct pyodbc connection test.
 """
 
 import pyodbc
+import sys
 
-# Replace these with your actual connection details
-SERVER = "your_server_ip"  # or hostname
-PORT = "2408"
-DATABASE = "your_database"
-USERNAME = "your_username"
-PASSWORD = "your_password"
+# ==========================================
+# EDIT THESE VALUES FOR YOUR CONNECTION
+# ==========================================
+SERVER = "YOUR_SERVER_HERE"   # <-- REPLACE with your actual server (IP or hostname)
+PORT = "2408"                 # Your custom port
+DATABASE = "DB_GramBook_v11.0"
+USERNAME = "Demo"
+PASSWORD = "sa@123"
 
-# Test different connection string formats
-test_conn_strings = [
-    # Format 1: Comma-separated host:port
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={SERVER},{PORT};DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes;",
-    
-    # Format 2: With IP address
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={SERVER},{PORT};DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes;",
-    
-    # Format 3: Without port (default 1433 - will fail)
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={SERVER};DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD};TrustServerCertificate=yes;",
-    
-    # Format 4: With Encrypt/SSL disabled
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={SERVER},{PORT};DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD};Encrypt=no;TrustServerCertificate=yes;",
-]
-
-print(f"Testing connection to {SERVER},{PORT}")
+print(f"Testing connection to {SERVER}:{PORT}")
 print("=" * 60)
 
-for i, conn_str in enumerate(test_conn_strings, 1):
-    print(f"\nTest {i}: {conn_str[:80]}...")
-    try:
-        conn = pyodbc.connect(conn_str, timeout=10)
-        print(f"  SUCCESS!")
-        conn.close()
-        break
-    except pyodbc.Error as e:
-        print(f"  FAILED: {e}")
-    except Exception as e:
-        print(f"  ERROR: {e}")
+if SERVER == "YOUR_SERVER_HERE":
+    print("ERROR: Please edit this file and replace 'YOUR_SERVER_HERE' with your actual server address")
+    print("\nExample formats:")
+    print("  SERVER = '192.168.1.100'")
+    print("  SERVER = 'localhost'")
+    print("  SERVER = 'sql.example.com'")
+    sys.exit(1)
 
-print("\n" + "=" * 60)
-print("Test complete.")
+# Build connection string
+conn_str = (
+    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+    f"SERVER={SERVER},{PORT};"
+    f"DATABASE={DATABASE};"
+    f"UID={USERNAME};"
+    f"PWD={PASSWORD};"
+    f"TrustServerCertificate=yes;"
+)
+
+print(f"Connection string: {conn_str}")
+print("-" * 60)
+
+try:
+    conn = pyodbc.connect(conn_str, timeout=15)
+    print("SUCCESS! Connected!")
+    
+    cursor = conn.cursor()
+    cursor.execute("SELECT @@VERSION")
+    row = cursor.fetchone()
+    print(f"SQL Server Version: {row[0][:100]}...")
+    
+    cursor.close()
+    conn.close()
+    print("\nConnection test PASSED!")
+    
+except pyodbc.Error as e:
+    print(f"\nFAILED!")
+    print(f"Error code: {e.args[0]}")
+    print(f"Message: {e.args[1]}")
+except Exception as e:
+    print(f"\nERROR: {e}")
