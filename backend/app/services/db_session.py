@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import json
+import logging
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+# Persist sessions to this file so they survive server restarts
+_SESSION_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "db_sessions.json"
 
 
 @dataclass
@@ -15,8 +23,35 @@ class DBSession:
     cached_schema: str = ""
 
 
-# In-memory sessions (single-process). Good for local/dev.
+# In-memory sessions, synced to disk
 _SESSIONS: Dict[str, DBSession] = {}
+
+
+def _load_from_disk() -> None:
+    """Load sessions from disk on startup."""
+    global _SESSIONS
+    try:
+        if _SESSION_FILE.exists():
+            raw = json.loads(_SESSION_FILE.read_text(encoding="utf-8"))
+            for sid, data in raw.items():
+                _SESSIONS[sid] = DBSession(**data)
+            logger.info("Loaded %d DB sessions from disk", len(_SESSIONS))
+    except Exception as e:
+        logger.warning("Could not load sessions from disk: %s", e)
+
+
+def _save_to_disk() -> None:
+    """Persist sessions to disk."""
+    try:
+        _SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        raw = {sid: asdict(s) for sid, s in _SESSIONS.items()}
+        _SESSION_FILE.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Could not save sessions to disk: %s", e)
+
+
+# Load on import
+_load_from_disk()
 
 
 def create_session(db_url: str, source: dict, cached_schema: str = "") -> str:
@@ -29,6 +64,7 @@ def create_session(db_url: str, source: dict, cached_schema: str = "") -> str:
         last_used_at=now,
         cached_schema=cached_schema,
     )
+    _save_to_disk()
     return sid
 
 
@@ -41,6 +77,7 @@ def get_session(sid: str) -> Optional[DBSession]:
 
 def delete_session(sid: str) -> None:
     _SESSIONS.pop(sid, None)
+    _save_to_disk()
 
 
 def cleanup_expired(ttl_seconds: int = 900) -> int:
@@ -52,4 +89,6 @@ def cleanup_expired(ttl_seconds: int = 900) -> int:
     dead = [k for k, v in _SESSIONS.items() if (now - v.last_used_at) > ttl_seconds]
     for k in dead:
         _SESSIONS.pop(k, None)
+    if dead:
+        _save_to_disk()
     return len(dead)

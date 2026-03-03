@@ -97,7 +97,7 @@ Rules:
 - Use [brackets] for all names. Use N'' for non-English text.
 
 Example queries:
-- SELECT TOP 50 * FROM {example_table}
+- SELECT * FROM {example_table}
 - SELECT DISTINCT [PropertyType] FROM {example_table} WHERE [PropertyType] IN (N'value1', N'value2')
 - SELECT COUNT(*) FROM {example_table} WHERE [ColumnName] = N'value'
 
