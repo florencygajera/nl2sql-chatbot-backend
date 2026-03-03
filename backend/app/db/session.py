@@ -288,6 +288,7 @@ def get_schema_summary() -> str:
 
             lines: list[str] = []
             current_table = None
+            tables_processed = 0
             for row in rows:
                 if dialect == "mssql":
                     table_schema, table_name, col_name, data_type = row
@@ -301,10 +302,15 @@ def get_schema_summary() -> str:
                 if col_name.lower() in ignore_cols:
                     continue
                 if full_table_name != current_table:
+                    if tables_processed >= 30:
+                        lines.append("... (schema truncated due to size limits)")
+                        break
+                    
                     if current_table is not None:
                         lines.append("")
                     lines.append(f'Table: "{full_table_name}"')
                     current_table = full_table_name
+                    tables_processed += 1
                 lines.append(f'  - "{col_name}" ({data_type})')
             return "\n".join(lines).strip()
 
@@ -315,10 +321,15 @@ def get_schema_summary() -> str:
     # ── SQLite (and fallback) path ─────────────────────────────────────────────
     inspector = inspect(engine)
     lines = []
+    tables_processed = 0
     for table_name in inspector.get_table_names():
         if table_name.lower() in ignore_tables:
             continue
+        if tables_processed >= 30:
+            lines.append("... (schema truncated due to size limits)")
+            break
         lines.append(f'Table: "{table_name}"')
+        tables_processed += 1
         for col in inspector.get_columns(table_name):
             if col['name'].lower() in ignore_cols:
                 continue

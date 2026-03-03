@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     ENABLE_LLM_CACHE: bool = True
     LLM_CACHE_TTL_SECONDS: int = 600  # 10 minutes
     LLM_MAX_CONNECTIONS: int = 10
-    LLM_TIMEOUT_SECONDS: int = 120
+    LLM_TIMEOUT_SECONDS: int = 600
     ENABLE_PERFORMANCE_MONITORING: bool = True
 
 

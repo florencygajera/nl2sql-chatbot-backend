@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import re
-from app.llm.client import LLMClient
-
-_client = LLMClient()
+from app.llm.async_ollama_client import generate_async
 
 
 def _normalize_llm_sql(raw_sql: str) -> str:
@@ -29,10 +27,9 @@ def _normalize_llm_sql(raw_sql: str) -> str:
     # Fix doubled quotes
     s = s.replace('""', '"')
 
-    return s.strip()
 
 
-def generate_sql(user_message: str, schema_hint: str = "", dialect: str = "unknown") -> str:
+async def generate_sql(user_message: str, schema_hint: str = "", dialect: str = "unknown") -> str:
     """
     Generate SQL from a natural language question using the LLM.
     
@@ -74,7 +71,7 @@ def generate_sql(user_message: str, schema_hint: str = "", dialect: str = "unkno
             # Default to generic SQL
             prompt = _build_generic_prompt(user_message, extra)
 
-    raw = _client.generate(prompt).strip()
+    raw = (await generate_async(prompt, max_tokens=1000)).strip()
     raw = _normalize_llm_sql(raw)
 
     return raw

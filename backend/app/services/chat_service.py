@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.db.session import get_schema_summary, get_current_dialect
 from app.llm.nl2sql import generate_sql
@@ -159,14 +160,14 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
 
     # ── Step 2: Fetch DB schema ───────────────────────────────────────────────
     try:
-        schema = get_schema_summary()
+        schema = await run_in_threadpool(get_schema_summary)
     except Exception as exc:
         logger.warning("Could not fetch schema: %s", exc)
         schema = "Schema unavailable."
 
     # ── Step 3: Call LLM to generate SQL ──────────────────────────────────────
     try:
-        raw_sql = generate_sql(message, schema_hint=schema, dialect=dialect)
+        raw_sql = await generate_sql(message, schema_hint=schema, dialect=dialect)
     except Exception as exc:
         logger.error("LLM error: %s", exc)
         return {
@@ -211,7 +212,7 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
 
     if mode != "QUERY_ONLY":
         try:
-            result = execute_query(db, safe_sql, {}, dialect=dialect)
+            result = await run_in_threadpool(execute_query, db, safe_sql, {}, dialect)
         except QueryExecutionError as exc:
             logger.error("Query execution failed: %s", exc)
             return {

@@ -48,29 +48,30 @@ class AsyncOllamaClient:
         self,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: int = 120,
-        max_connections: int = 10,
-        cache_ttl_seconds: int = 300,
+        timeout: Optional[int] = None,
+        max_connections: Optional[int] = None,
+        cache_ttl_seconds: Optional[int] = None,
     ):
         settings = get_settings()
         self.base_url = base_url or settings.OLLAMA_BASE_URL
         self.model = model or settings.OLLAMA_MODEL
-        self.timeout = timeout
-        self.cache_ttl = cache_ttl_seconds
+        self.timeout = timeout or settings.LLM_TIMEOUT_SECONDS
+        self.cache_ttl = cache_ttl_seconds or settings.LLM_CACHE_TTL_SECONDS
+        max_conn = max_connections or settings.LLM_MAX_CONNECTIONS
         
         # Connection pool configuration
         connector = aiohttp.TCPConnector(
-            limit=max_connections,
-            limit_per_host=max_connections,
+            limit=max_conn,
+            limit_per_host=max_conn,
             keepalive_timeout=60,
             enable_cleanup_closed=True,
             force_close=False,
         )
         
         timeout_config = aiohttp.ClientTimeout(
-            total=timeout,
+            total=self.timeout,
             connect=10,
-            sock_read=timeout,
+            sock_read=self.timeout,
         )
         
         self.session = aiohttp.ClientSession(
@@ -85,7 +86,7 @@ class AsyncOllamaClient:
         
         logger.info(
             "AsyncOllamaClient initialized (pool_size=%d, timeout=%ds, cache_ttl=%ds)",
-            max_connections, timeout, cache_ttl_seconds
+            max_conn, self.timeout, self.cache_ttl
         )
     
     def _get_cache_key(self, prompt: str) -> str:
@@ -156,9 +157,11 @@ class AsyncOllamaClient:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
+                "keep_alive": "5m",
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens,
+                    "num_ctx": 4096,
                 },
             }
             

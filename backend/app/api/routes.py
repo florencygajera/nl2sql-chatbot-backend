@@ -21,6 +21,7 @@ from app.services.chat_service import handle_chat
 from app.services.db_session import get_session, cleanup_expired
 from app.api.upload_sql import router as upload_sql_router
 from app.api.db_routes import router as db_router
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -111,8 +112,9 @@ async def chat(
                 raise HTTPException(status_code=400, detail="DB session expired or invalid. Please upload/connect again.")
 
             # Attach DB only for this request
-            set_database_url(sess.db_url)
-            set_database_source(
+            await run_in_threadpool(set_database_url, sess.db_url)
+            await run_in_threadpool(
+                set_database_source,
                 attach_mode="SESSION",
                 db_type=sess.source.get("db_type", "unknown"),
                 details=sess.source.get("details", {}),
@@ -123,9 +125,9 @@ async def chat(
                 response = await handle_chat(message=request.message, db=db)
                 return response
             finally:
-                db.close()
+                await run_in_threadpool(db.close)
                 # Always detach back to env default
-                reset_database_url()
+                await run_in_threadpool(reset_database_url)
         else:
             # Fallback: use current default DB configured in environment
             db = SessionLocal()
@@ -133,7 +135,7 @@ async def chat(
                 response = await handle_chat(message=request.message, db=db)
                 return response
             finally:
-                db.close()
+                await run_in_threadpool(db.close)
 
     except Exception as exc:
         logger.exception("Unhandled error in /chat: %s", exc)
