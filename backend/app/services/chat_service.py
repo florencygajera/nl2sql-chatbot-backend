@@ -46,6 +46,129 @@ settings = get_settings()
 
 top_k = settings.NL2SQL_TOP_TABLES
 
+# ── SQL identifier checks (pre-execution) ─────────────────────────────────────
+
+_IDENT = re.compile(r"\b([A-Za-z_][\w]*)\b")
+
+def _parse_schema_to_map(schema_text: str) -> dict[str, set[str]]:
+    """
+    Parse schema text:
+      Table: "dbo.Table"
+        - "Column" (type)
+    -> { "dbo.Table": {"Id","Name"...}, ... }
+    """
+    table_map: dict[str, set[str]] = {}
+    current: str | None = None
+
+    for line in (schema_text or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("Table:"):
+            current = s.split("Table:", 1)[1].strip().strip('"').strip("'")
+            table_map[current] = set()
+            continue
+        if current and s.startswith("-"):
+            # sometimes schema has "- Column"
+            col = s[1:].strip().strip('"').split('"')[0] if '"' in s else s.split()[0]
+            if col:
+                table_map[current].add(col)
+        if current and s.startswith("  -"):
+            raw = s[3:].strip()
+            if raw.startswith('"'):
+                pieces = raw.split('"')
+                col = pieces[1] if len(pieces) >= 2 else raw
+            else:
+                col = raw.split(" ", 1)[0]
+            if col:
+                table_map[current].add(col)
+    return table_map
+
+
+def _extract_tables_from_sql(sql: str) -> list[str]:
+    """
+    Extract table references like dbo.Table from FROM/JOIN.
+    Handles:
+      FROM dbo.Table
+      JOIN dbo.Table
+      FROM [dbo].[Table]
+      JOIN [dbo].[Table]
+    """
+    s = sql or ""
+    tables: list[str] = []
+
+    # [dbo].[Table]
+    for m in re.finditer(r"\b(?:from|join)\s+\[([^\]]+)\]\.\[([^\]]+)\]", s, flags=re.I):
+        tables.append(f"{m.group(1)}.{m.group(2)}")
+
+    # dbo.Table
+    for m in re.finditer(r"\b(?:from|join)\s+([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)\b", s, flags=re.I):
+        tables.append(f"{m.group(1)}.{m.group(2)}")
+
+    # de-dupe preserve order
+    seen = set()
+    out = []
+    for t in tables:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def _extract_column_refs(sql: str) -> set[str]:
+    """
+    Very lightweight extraction of column names used in SQL.
+    Captures:
+      alias.col
+      [alias].[col]
+      [col]
+    """
+    s = sql or ""
+    cols: set[str] = set()
+
+    # alias.col
+    for m in re.finditer(r"\b[A-Za-z_][\w]*\.([A-Za-z_][\w]*)\b", s):
+        cols.add(m.group(1))
+
+    # [alias].[col]
+    for m in re.finditer(r"\[[^\]]+\]\.\[([^\]]+)\]", s):
+        cols.add(m.group(1))
+
+    # [col]
+    for m in re.finditer(r"\[([^\]]+)\]", s):
+        cols.add(m.group(1))
+
+    # remove obvious SQL keywords (keep small list)
+    keywords = {
+        "select","from","where","join","on","and","or","group","by","order","as","inner","left","right",
+        "count","sum","avg","min","max","distinct","top","limit","offset","fetch"
+    }
+    cols = {c for c in cols if c and c.lower() not in keywords}
+    return cols
+
+
+def _validate_columns_exist(sql: str, schema_text: str) -> tuple[bool, str]:
+    """
+    Ensure every referenced column exists in at least one selected table.
+    This blocks hallucinated columns (like RojmelTypeId) before execution.
+    """
+    table_map = _parse_schema_to_map(schema_text)
+    if not table_map:
+        return True, ""
+
+    referenced_cols = _extract_column_refs(sql)
+    if not referenced_cols:
+        return True, ""
+
+    all_cols = set().union(*table_map.values()) if table_map else set()
+    missing = [c for c in referenced_cols if c not in all_cols]
+
+    if missing:
+        return False, f"SQL referenced unknown column(s): {', '.join(missing)}"
+
+    return True, ""
+
+
 # ── Response builders ─────────────────────────────────────────────────────────
 
 def _build_db_response(
@@ -410,23 +533,77 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
         }
 
     # ── Step 5: Execute (unless QUERY_ONLY) with repair loop ──────────────────
+        # ── Step 5: Execute (unless QUERY_ONLY) with strong repair loop ────────────
     result: QueryResult | None = None
 
     if mode != "QUERY_ONLY":
-        max_retries = settings.NL2SQL_MAX_RETRIES
+        max_retries = int(getattr(settings, "NL2SQL_MAX_RETRIES", 2))
         attempt = 0
-        last_exc: Exception | None = None
 
         while attempt <= max_retries:
+            # 5.0 Pre-execution: validate columns exist in schema subset
+            ok, reason = _validate_columns_exist(safe_sql, schema)
+            if not ok:
+                logger.error("Blocked invalid SQL before execution: %s | SQL: %s", reason, safe_sql)
+
+                # Re-fetch schema strictly for tables referenced in SQL (to repair better)
+                referenced_tables = _extract_tables_from_sql(safe_sql)
+                if referenced_tables:
+                    try:
+                        schema = await run_in_threadpool(get_schema_for_tables, referenced_tables)
+                    except Exception as exc:
+                        logger.warning("Could not refetch schema for referenced tables: %s", exc)
+
+                if attempt >= max_retries:
+                    return {
+                        "type": "DB",
+                        "mode": mode,
+                        "sql": safe_sql,
+                        "params": {},
+                        "explanation": explanation,
+                        "error": reason,
+                        "answer_text": (
+                            f"I blocked the generated SQL because it used column(s) that don't exist: {reason}. "
+                            "Please specify the correct column or ask: 'show me columns of <table>'."
+                        ),
+                    }
+
+                # Repair: force model to ONLY use existing columns or CLARIFY
+                repair_prompt = (
+                    "Fix this SQL Server query. Return ONLY corrected SQL.\n"
+                    "HARD RULES:\n"
+                    "- Use ONLY tables and columns present in the schema.\n"
+                    "- Do NOT invent join keys.\n"
+                    "- If you cannot determine the correct join key, return:\n"
+                    "  SELECT N'CLARIFY: Which column should be used to join these tables?' AS [NeedMoreInfo];\n\n"
+                    f"USER QUESTION:\n{message}\n\n"
+                    f"FAILED SQL:\n{safe_sql}\n\n"
+                    f"VALIDATION ERROR:\n{reason}\n\n"
+                    f"SCHEMA:\n{schema}\n"
+                )
+
+                repaired = await generate_sql(repair_prompt, schema_hint=schema, dialect=dialect)
+                validation2 = validate_and_sanitize(repaired, dialect=dialect)
+                safe_sql = validation2.sanitized_sql
+                explanation = f"Repaired SQL for: {message}"
+                attempt += 1
+                continue
+
+            # 5.1 Execute
             try:
                 result = await run_in_threadpool(execute_query, db, safe_sql, {}, dialect)
-                last_exc = None
                 break
             except QueryExecutionError as exc:
-                last_exc = exc
-                logger.error("Query execution failed (attempt %d/%d): %s", attempt + 1, max_retries + 1, exc)
+                logger.error("Query execution failed (attempt %d/%d): %s | SQL: %s", attempt + 1, max_retries + 1, exc, safe_sql)
 
-                # If we have no retries left, return error response
+                # Refetch schema for referenced tables (helps repair)
+                referenced_tables = _extract_tables_from_sql(safe_sql)
+                if referenced_tables:
+                    try:
+                        schema = await run_in_threadpool(get_schema_for_tables, referenced_tables)
+                    except Exception as sx:
+                        logger.warning("Could not refetch schema for referenced tables: %s", sx)
+
                 if attempt >= max_retries:
                     return {
                         "type": "DB",
@@ -438,45 +615,26 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
                         "answer_text": _build_query_error_answer(exc, schema),
                     }
 
-                # Try to repair SQL using the DB error
-                try:
-                    repaired = await _repair_sql(
-                        question=message,
-                        previous_sql=safe_sql,
-                        error_text=str(exc),
-                        schema=schema,
-                        dialect=dialect,
-                    )
-                    if not repaired or not repaired.strip():
-                        # If repair fails to produce SQL, stop early with friendly error
-                        return {
-                            "type": "DB",
-                            "mode": mode,
-                            "sql": safe_sql,
-                            "params": {},
-                            "explanation": explanation,
-                            "error": str(exc),
-                            "answer_text": _build_query_error_answer(exc, schema),
-                        }
+                # Repair using DB error + schema
+                repair_prompt = (
+                    "Fix this SQL Server query. Return ONLY corrected SQL.\n"
+                    "HARD RULES:\n"
+                    "- Use ONLY tables and columns present in the schema.\n"
+                    "- Do NOT invent join keys.\n"
+                    "- If you cannot determine the correct join key, return:\n"
+                    "  SELECT N'CLARIFY: Which column should be used to join these tables?' AS [NeedMoreInfo];\n\n"
+                    f"USER QUESTION:\n{message}\n\n"
+                    f"FAILED SQL:\n{safe_sql}\n\n"
+                    f"DB ERROR:\n{exc}\n\n"
+                    f"SCHEMA:\n{schema}\n"
+                )
 
-                    # Validate repaired SQL
-                    validation2 = validate_and_sanitize(repaired, dialect=dialect)
-                    safe_sql = validation2.sanitized_sql
-                    explanation = f"Repaired SQL for: {message}"
-                except Exception as repair_exc:
-                    logger.warning("SQL repair failed: %s", repair_exc)
-                    return {
-                        "type": "DB",
-                        "mode": mode,
-                        "sql": safe_sql,
-                        "params": {},
-                        "explanation": explanation,
-                        "error": str(last_exc) if last_exc else "Unknown error",
-                        "answer_text": _build_query_error_answer(last_exc or repair_exc, schema),
-                    }
-
-            attempt += 1
-
+                repaired = await generate_sql(repair_prompt, schema_hint=schema, dialect=dialect)
+                validation2 = validate_and_sanitize(repaired, dialect=dialect)
+                safe_sql = validation2.sanitized_sql
+                explanation = f"Repaired SQL for: {message}"
+                attempt += 1
+                
     # ── Step 6: Build final response ──────────────────────────────────────────
     return _build_db_response(
         mode=mode,
