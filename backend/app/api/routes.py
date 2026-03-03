@@ -114,10 +114,11 @@ async def chat(
             # Attach DB only for this request
             await run_in_threadpool(set_database_url, sess.db_url)
             await run_in_threadpool(
-                set_database_source,
-                attach_mode="SESSION",
-                db_type=sess.source.get("db_type", "unknown"),
-                details=sess.source.get("details", {}),
+                lambda: set_database_source(
+                    attach_mode="SESSION",
+                    db_type=sess.source.get("db_type", "unknown"),
+                    details=sess.source.get("details", {}),
+                )
             )
 
             db = SessionLocal()
@@ -137,12 +138,13 @@ async def chat(
             finally:
                 await run_in_threadpool(db.close)
 
+    except HTTPException:
+        raise
     except Exception as exc:
-        import traceback
         logger.exception("Unhandled error in /chat: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred: {traceback.format_exc()}",
+            detail=f"An unexpected error occurred: {exc}",
         ) from exc
 
 

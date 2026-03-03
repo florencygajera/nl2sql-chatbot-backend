@@ -27,7 +27,7 @@ def _normalize_llm_sql(raw_sql: str) -> str:
     # Fix doubled quotes
     s = s.replace('""', '"')
 
-
+    return s.strip()
 
 async def generate_sql(user_message: str, schema_hint: str = "", dialect: str = "unknown") -> str:
     """

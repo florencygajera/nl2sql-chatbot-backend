@@ -163,7 +163,20 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
         schema = await run_in_threadpool(get_schema_summary)
     except Exception as exc:
         logger.warning("Could not fetch schema: %s", exc)
-        schema = "Schema unavailable."
+        schema = ""
+
+    logger.info("Schema fetched: %d chars, %d lines", len(schema or ""), len((schema or "").splitlines()))
+
+    # If schema is empty, we can't generate accurate SQL
+    if not schema or not schema.strip():
+        return {
+            "type": "CHAT",
+            "answer": (
+                "I could not retrieve the database schema. "
+                "Please make sure you are connected to a database via /db/connect "
+                "and pass the db_session_id in your chat request."
+            ),
+        }
 
     # ── Step 3: Call LLM to generate SQL ──────────────────────────────────────
     try:
@@ -179,6 +192,12 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
         }
 
     # Check if we need clarification on SQL dialect
+    if not raw_sql:
+        return {
+            "type": "CHAT",
+            "answer": "I wasn't able to generate a SQL query for that question. Could you rephrase?",
+        }
+
     if "Please specify which SQL dialect" in raw_sql:
         return {
             "type": "CHAT",

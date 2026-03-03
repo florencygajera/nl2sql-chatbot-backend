@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -30,7 +31,7 @@ from app.db.schema_cache import get_schema_cache
 from app.db.session import get_schema_summary, get_current_dialect, active_db_info
 from app.llm.async_ollama_client import generate_async
 from app.llm.nl2sql import (
-    generate_sql_sync,
+    _normalize_llm_sql,
     _build_mssql_prompt,
     _build_postgres_prompt,
     _build_mysql_prompt,
@@ -55,7 +56,6 @@ class TimingMetrics:
     schema_cached: bool = False
 
 
-from dataclasses import dataclass
 
 
 # ── Response builders ─────────────────────────────────────────────────────────
@@ -329,9 +329,7 @@ def handle_chat_sync(message: str, db: Session) -> dict[str, Any]:
         if loop.is_running():
             # We're in an async context, this shouldn't happen
             logger.warning("handle_chat_sync called from async context - use handle_chat_optimized instead")
-            # Fall back to original implementation
-            from app.services.chat_service import handle_chat
-            return handle_chat(message, db)
+            raise RuntimeError("Cannot call sync wrapper from async context")
         else:
             return loop.run_until_complete(handle_chat_optimized(message, db))
     except RuntimeError:
