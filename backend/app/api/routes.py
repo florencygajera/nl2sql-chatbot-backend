@@ -123,7 +123,11 @@ async def chat(
 
             db = SessionLocal()
             try:
-                response = await handle_chat(message=request.message, db=db)
+                response = await handle_chat(
+                    message=request.message,
+                    db=db,
+                    cached_schema=sess.cached_schema,
+                )
                 return response
             finally:
                 await run_in_threadpool(db.close)

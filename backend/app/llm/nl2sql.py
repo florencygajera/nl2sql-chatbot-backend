@@ -71,31 +71,41 @@ async def generate_sql(user_message: str, schema_hint: str = "", dialect: str = 
             # Default to generic SQL
             prompt = _build_generic_prompt(user_message, extra)
 
-    raw = (await generate_async(prompt, max_tokens=1000)).strip()
+    raw = (await generate_async(prompt, max_tokens=300)).strip()
     raw = _normalize_llm_sql(raw)
 
     return raw
 
 
 def _build_mssql_prompt(user_message: str, schema: str) -> str:
-    return f"""You are a SQL generator for Microsoft SQL Server (T-SQL).
+    # Extract first table name from schema for use in examples
+    example_table = "[TableName]"
+    for line in schema.splitlines():
+        if line.startswith('Table: '):
+            raw = line.split('Table: ', 1)[1].strip().strip('"')
+            if '.' in raw:
+                parts = raw.split('.', 1)
+                example_table = f"[{parts[0]}].[{parts[1]}]"
+            else:
+                example_table = f"[{raw}]"
+            break
 
-Return ONLY ONE T-SQL SELECT query. No markdown. No explanations.
-Do NOT wrap output in ```sql fences.
+    return f"""Write a T-SQL SELECT query for SQL Server. Output ONLY the SQL query, nothing else.
 
-CRITICAL SQL SERVER RULES:
-- Use ONLY table names and column names that appear in the schema below.
-- If schema-qualified names are shown (example: dbo.Users), use that full schema-qualified table name.
-- Prefer bracketed identifiers for MSSQL names:
-  Example: SELECT TOP 10 [Id] FROM [dbo].[User_Master]
-- Do NOT use LIMIT. Instead use SELECT TOP N for limiting results.
-- Do not use double quotes for identifiers.
-- Do not invent tables or columns.
+Rules:
+- Use ONLY tables and columns from the schema below.
+- Use [brackets] for all names. Use N'' for non-English text.
 
-Database Schema:
+Example queries:
+- SELECT TOP 50 * FROM {example_table}
+- SELECT DISTINCT [PropertyType] FROM {example_table} WHERE [PropertyType] IN (N'value1', N'value2')
+- SELECT COUNT(*) FROM {example_table} WHERE [ColumnName] = N'value'
+
+Schema:
 {schema}
 
-Question: {user_message}""".strip()
+Question: {user_message}
+SQL:""".strip()
 
 
 def _build_postgres_prompt(user_message: str, schema: str) -> str:

@@ -12,13 +12,14 @@ class DBSession:
     source: dict
     created_at: float
     last_used_at: float
+    cached_schema: str = ""
 
 
 # In-memory sessions (single-process). Good for local/dev.
 _SESSIONS: Dict[str, DBSession] = {}
 
 
-def create_session(db_url: str, source: dict) -> str:
+def create_session(db_url: str, source: dict, cached_schema: str = "") -> str:
     sid = secrets.token_urlsafe(24)
     now = time.time()
     _SESSIONS[sid] = DBSession(
@@ -26,6 +27,7 @@ def create_session(db_url: str, source: dict) -> str:
         source=source or {},
         created_at=now,
         last_used_at=now,
+        cached_schema=cached_schema,
     )
     return sid
 

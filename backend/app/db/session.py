@@ -302,7 +302,7 @@ def get_schema_summary() -> str:
                 if col_name.lower() in ignore_cols:
                     continue
                 if full_table_name != current_table:
-                    if tables_processed >= 30:
+                    if tables_processed >= 15:
                         lines.append("... (schema truncated due to size limits)")
                         break
                     
@@ -325,7 +325,7 @@ def get_schema_summary() -> str:
     for table_name in inspector.get_table_names():
         if table_name.lower() in ignore_tables:
             continue
-        if tables_processed >= 30:
+        if tables_processed >= 15:
             lines.append("... (schema truncated due to size limits)")
             break
         lines.append(f'Table: "{table_name}"')

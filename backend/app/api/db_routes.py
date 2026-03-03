@@ -271,7 +271,7 @@ def connect_db(payload: DBConnectRequest):
 
         # Step 3: Fetch schema (reuses the already-connected engine)
         schema = get_schema_summary()
-        sid = create_session(db_url=url, source=active_db_info.get('source', {}))
+        sid = create_session(db_url=url, source=active_db_info.get('source', {}), cached_schema=schema)
         reset_database_url()
         return {
             "ok": True,

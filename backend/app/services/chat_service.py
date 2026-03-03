@@ -146,7 +146,7 @@ def _detect_response_mode(user_message: str) -> str:
 
 # ── Main service function ─────────────────────────────────────────────────────
 
-async def handle_chat(message: str, db: Session) -> dict[str, Any]:
+async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dict[str, Any]:
     """
     Process a user message end-to-end and return a JSON-serialisable response.
     """
@@ -158,14 +158,20 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
     mode = _detect_response_mode(message)
     logger.info("User message: %r | Mode: %s", message, mode)
 
-    # ── Step 2: Fetch DB schema ───────────────────────────────────────────────
-    try:
-        schema = await run_in_threadpool(get_schema_summary)
-    except Exception as exc:
-        logger.warning("Could not fetch schema: %s", exc)
-        schema = ""
+    # ── Step 2: Fetch DB schema (use cached if available) ─────────────────────
+    schema = cached_schema or ""
+    if not schema.strip():
+        try:
+            schema = await run_in_threadpool(get_schema_summary)
+        except Exception as exc:
+            logger.warning("Could not fetch schema: %s", exc)
+            schema = ""
 
-    logger.info("Schema fetched: %d chars, %d lines", len(schema or ""), len((schema or "").splitlines()))
+    logger.info(
+        "Schema: %d chars, %d lines, cached=%s, preview=%.200s",
+        len(schema or ""), len((schema or "").splitlines()),
+        bool(cached_schema), (schema or "")[:200]
+    )
 
     # If schema is empty, we can't generate accurate SQL
     if not schema or not schema.strip():
