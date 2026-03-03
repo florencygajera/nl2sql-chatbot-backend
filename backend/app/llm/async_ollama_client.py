@@ -57,6 +57,9 @@ class AsyncOllamaClient:
         self.model = model or settings.OLLAMA_MODEL
         self.timeout = timeout or settings.LLM_TIMEOUT_SECONDS
         self.cache_ttl = cache_ttl_seconds or settings.LLM_CACHE_TTL_SECONDS
+        self.num_ctx = getattr(settings, "LLM_NUM_CTX", 2048)
+        self.default_max_tokens = getattr(settings, "LLM_MAX_TOKENS", 150)
+
         max_conn = max_connections or settings.LLM_MAX_CONNECTIONS
         
         # Connection pool configuration
@@ -119,7 +122,7 @@ class AsyncOllamaClient:
         self,
         prompt: str,
         temperature: float = 0.0,
-        max_tokens: int = 150,
+        max_tokens: Optional[int] = None,
         use_cache: bool = True,
     ) -> str:
         """
@@ -153,6 +156,8 @@ class AsyncOllamaClient:
                 return cached
         
         try:
+            max_tokens = max_tokens or self.default_max_tokens
+
             payload = {
                 "model": self.model,
                 "prompt": prompt,
@@ -161,7 +166,7 @@ class AsyncOllamaClient:
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens,
-                    "num_ctx": 2048,
+                    "num_ctx": self.num_ctx,
                 },
             }
             
@@ -247,7 +252,7 @@ def get_ollama_client() -> AsyncOllamaClient:
 async def generate_async(
     prompt: str,
     temperature: float = 0.0,
-    max_tokens: int = 150,
+    max_tokens: Optional[int] = None,
     use_cache: bool = True,
 ) -> str:
     """

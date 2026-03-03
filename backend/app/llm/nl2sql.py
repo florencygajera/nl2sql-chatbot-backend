@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import re
 from app.llm.async_ollama_client import generate_async
+from app.core.config import get_settings
+settings = get_settings()
+
 
 
 def _normalize_llm_sql(raw_sql: str) -> str:
@@ -71,7 +74,7 @@ async def generate_sql(user_message: str, schema_hint: str = "", dialect: str = 
             # Default to generic SQL
             prompt = _build_generic_prompt(user_message, extra)
 
-    raw = (await generate_async(prompt, max_tokens=300)).strip()
+    raw = (await generate_async(prompt=prompt, temperature=0.0, max_tokens=settings.LLM_MAX_TOKENS, use_cache=True)).strip()
     raw = _normalize_llm_sql(raw)
 
     return raw

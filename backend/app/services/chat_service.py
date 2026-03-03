@@ -19,7 +19,16 @@ from typing import Any
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app.db.session import get_schema_summary, get_current_dialect
+from app.db.session import (
+    get_schema_summary,
+    get_schema_catalog,
+    get_schema_for_tables,
+    get_current_dialect,
+)
+from app.db.schema_retriever import parse_schema_summary, select_relevant_tables
+from app.core.config import get_settings
+settings = get_settings()
+
 from app.llm.nl2sql import generate_sql
 from app.security.sql_guard import SQLGuardError, validate_and_sanitize
 from app.services.query_executor import QueryExecutionError, QueryResult, execute_query
@@ -158,23 +167,25 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
     mode = _detect_response_mode(message)
     logger.info("User message: %r | Mode: %s", message, mode)
 
-    # ── Step 2: Fetch DB schema (use cached if available) ─────────────────────
-    schema = cached_schema or ""
-    if not schema.strip():
+    # ── Step 2: Fetch DB catalog + select relevant schema ──────────────────────
+    # Prefer cached_schema if provided by db_session (fast), otherwise fetch a full catalog.
+    catalog = cached_schema or ""
+    if not catalog.strip():
         try:
-            schema = await run_in_threadpool(get_schema_summary)
+            catalog = await run_in_threadpool(get_schema_catalog)
         except Exception as exc:
-            logger.warning("Could not fetch schema: %s", exc)
-            schema = ""
+            logger.warning("Could not fetch schema catalog: %s", exc)
+            catalog = ""
 
-    logger.info(
-        "Schema: %d chars, %d lines, cached=%s, preview=%.200s",
-        len(schema or ""), len((schema or "").splitlines()),
-        bool(cached_schema), (schema or "")[:200]
-    )
+    # Fall back to the old truncated summary if needed
+    if not catalog.strip():
+        try:
+            catalog = await run_in_threadpool(get_schema_summary)
+        except Exception as exc:
+            logger.warning("Could not fetch schema summary: %s", exc)
+            catalog = ""
 
-    # If schema is empty, we can't generate accurate SQL
-    if not schema or not schema.strip():
+    if not catalog.strip():
         return {
             "type": "CHAT",
             "answer": (
@@ -184,7 +195,25 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
             ),
         }
 
-    # ── Step 3: Call LLM to generate SQL ──────────────────────────────────────
+    # Pick most relevant tables for the question and fetch full columns for them
+    tables = parse_schema_summary(catalog)
+    top_k = getattr(settings, "NL2SQL_TOP_TABLES", 10)
+    picked_tables = select_relevant_tables(question=message, tables=tables, top_k=top_k)
+
+    try:
+        schema = await run_in_threadpool(get_schema_for_tables, picked_tables)
+    except Exception as exc:
+        logger.warning("Could not fetch targeted schema: %s", exc)
+        schema = catalog
+
+    logger.info(
+        "Schema(catalog=%d chars) -> targeted_schema=%d chars | picked_tables=%s",
+        len(catalog or ""),
+        len(schema or ""),
+        picked_tables[: min(8, len(picked_tables))],
+    )
+
+# ── Step 3: Call LLM to generate SQL ──────────────────────────────────────
     try:
         raw_sql = await generate_sql(message, schema_hint=schema, dialect=dialect)
     except Exception as exc:

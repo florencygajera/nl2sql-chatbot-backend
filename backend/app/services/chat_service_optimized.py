@@ -28,7 +28,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.schema_cache import get_schema_cache
-from app.db.session import get_schema_summary, get_current_dialect, active_db_info
+from app.db.session import (
+    get_schema_summary,
+    get_schema_catalog,
+    get_schema_for_tables,
+    get_current_dialect,
+    active_db_info,
+)
+from app.db.schema_retriever import parse_schema_summary, select_relevant_tables
+
 from app.llm.async_ollama_client import generate_async
 from app.llm.nl2sql import (
     _normalize_llm_sql,
@@ -202,102 +210,162 @@ async def handle_chat_optimized(message: str, db: Session, db_url: Optional[str]
     mode = _detect_response_mode(message)
     logger.debug("Mode detected: %s", mode)
 
-    # ── Step 2: Fetch DB schema (with caching) ────────────────────────────────
+    # ── Step 2: Fetch DB catalog + select relevant schema (with caching) ─────────
     schema_start = time.time()
     cache = get_schema_cache()
-    
+
+    # 2a) Fetch an *untruncated* catalog for table selection
     if db_url:
-        # Try cache first
-        cached_schema = cache._cache.get(cache._get_db_hash(db_url)) if hasattr(cache, '_cache') else None
-        schema = cache.get(db_url, fetch_func=get_schema_summary)
-        timings.schema_cached = cached_schema is not None and cache._is_valid(cached_schema) if cached_schema else False
+        cached_entry = cache._cache.get(cache._get_db_hash(db_url)) if hasattr(cache, "_cache") else None
+        catalog = cache.get(db_url, fetch_func=get_schema_catalog) or ""
+        timings.schema_cached = bool(cached_entry and cache._is_valid(cached_entry)) if cached_entry else False
     else:
-        # Fallback to direct fetch
         try:
-            schema = get_schema_summary()
-            timings.schema_cached = False
+            catalog = get_schema_catalog()
         except Exception as exc:
-            logger.warning("Could not fetch schema: %s", exc)
-            schema = "Schema unavailable."
-    
-    timings.schema_fetch_ms = (time.time() - schema_start) * 1000
-    logger.debug("Schema fetch took %.2fms (cached=%s)", timings.schema_fetch_ms, timings.schema_cached)
+            logger.warning("Could not fetch schema catalog: %s", exc)
+            catalog = ""
+        timings.schema_cached = False
 
-    # ── Step 3: Build prompt and call LLM (ASYNC) ─────────────────────────────
-    prompt = _build_prompt(message, schema, dialect)
-    
-    llm_start = time.time()
+    # 2b) If catalog is missing, fall back to the old summary (still better than nothing)
+    if not catalog.strip():
+        try:
+            catalog = get_schema_summary()
+        except Exception as exc:
+            logger.warning("Could not fetch schema summary: %s", exc)
+            catalog = ""
+
+    # 2c) Select the most relevant tables for this question
+    tables = parse_schema_summary(catalog)
+    top_k = getattr(settings, "NL2SQL_TOP_TABLES", 10)
+    picked_tables = select_relevant_tables(question=message, tables=tables, top_k=top_k)
+
+    # 2d) Fetch full column list for those tables (avoids schema truncation hurting accuracy)
     try:
-        raw_sql = await generate_async(
-            prompt=prompt,
-            temperature=0.0,
-            max_tokens=150,
-            use_cache=True,
-        )
+        schema = get_schema_for_tables(picked_tables)
     except Exception as exc:
-        logger.error("LLM error: %s", exc)
-        return {
-            "type": "CHAT",
-            "answer": (
-                "I encountered an error communicating with the AI model. "
-                f"Details: {exc}"
-            ),
-        }
-    
-    timings.llm_generation_ms = (time.time() - llm_start) * 1000
-    logger.debug("LLM generation took %.2fms", timings.llm_generation_ms)
+        logger.warning("Could not fetch targeted schema: %s", exc)
+        schema = catalog
 
-    # Check if we need clarification on SQL dialect
-    if "Please specify which SQL dialect" in raw_sql:
-        return {
-            "type": "CHAT",
-            "answer": raw_sql,
-        }
+    timings.schema_fetch_ms = (time.time() - schema_start) * 1000
+    logger.debug(
+        "Schema fetch took %.2fms (cached=%s) | picked_tables=%s",
+        timings.schema_fetch_ms,
+        timings.schema_cached,
+        picked_tables[: min(8, len(picked_tables))],
+    )
 
-    if not raw_sql.strip():
-        return {
-            "type": "CHAT",
-            "answer": "I wasn't able to generate a SQL query for that question. Could you rephrase?",
-        }
+# ── Step 3: Build prompt + NL→SQL generation (with retry/repair) ────────────
+    base_prompt = _build_prompt(message, schema, dialect)
 
-    explanation = f"Generated SQL for: {message}"
+    max_retries = int(getattr(settings, "NL2SQL_MAX_RETRIES", 2))
+    llm_tokens = int(getattr(settings, "LLM_MAX_TOKENS", 512))
 
-    # ── Step 4: Validate SQL (dialect-aware) ──────────────────────────────────
-    validation_start = time.time()
-    try:
-        validation = validate_and_sanitize(raw_sql, dialect=dialect)
-        safe_sql = validation.sanitized_sql
-    except SQLGuardError as exc:
-        logger.warning("SQL guard rejected query: %s | SQL: %s", exc, raw_sql)
-        return {
-            "type": "CHAT",
-            "answer": (
-                f"The generated SQL did not pass security validation: {exc}. "
-                "Please rephrase your question."
-            ),
-        }
-    
-    timings.sql_validation_ms = (time.time() - validation_start) * 1000
-
-    # ── Step 5: Execute (unless QUERY_ONLY) ───────────────────────────────────
+    raw_sql = ""
+    safe_sql = ""
+    last_exec_error: Exception | None = None
     result: QueryResult | None = None
 
-    if mode != "QUERY_ONLY":
+    sql_validation_total_ms = 0.0
+    query_execution_total_ms = 0.0
+
+    for attempt in range(max_retries + 1):
+        # If we already executed and got an error, ask the model to repair.
+        if attempt == 0:
+            prompt = base_prompt
+        else:
+            prompt = (
+                f"Fix the {dialect} SELECT query using ONLY the schema below. "
+                "Output ONLY the corrected SQL SELECT query.\n\n"
+                f"Schema:\n{schema}\n\n"
+                f"Original question: {message}\n"
+                f"Previous SQL: {safe_sql or raw_sql}\n"
+                f"Execution error: {last_exec_error}\n"
+                "Corrected SQL:"
+            )
+
+        # LLM call
+        llm_start = time.time()
+        try:
+            raw_sql = await generate_async(
+                prompt=prompt,
+                temperature=0.0,
+                max_tokens=llm_tokens,
+                use_cache=True,
+            )
+        except Exception as exc:
+            logger.error("LLM error: %s", exc)
+            return {
+                "type": "CHAT",
+                "answer": (
+                    "I encountered an error communicating with the AI model. "
+                    f"Details: {exc}"
+                ),
+            }
+        timings.llm_generation_ms += (time.time() - llm_start) * 1000
+
+        # Quick guardrails
+        if not (raw_sql or "").strip():
+            return {
+                "type": "CHAT",
+                "answer": "I wasn't able to generate a SQL query for that question. Could you rephrase?",
+            }
+        if "Please specify which SQL dialect" in raw_sql:
+            return {"type": "CHAT", "answer": raw_sql}
+
+        # Normalize + validate
+        norm_sql = _normalize_llm_sql(raw_sql)
+
+        validation_start = time.time()
+        try:
+            validation = validate_and_sanitize(norm_sql, dialect=dialect)
+            safe_sql = validation.sanitized_sql
+        except SQLGuardError as exc:
+            logger.warning("SQL guard rejected query: %s | SQL: %s", exc, norm_sql)
+            return {
+                "type": "CHAT",
+                "answer": (
+                    f"The generated SQL did not pass security validation: {exc}. "
+                    "Please rephrase your question."
+                ),
+            }
+        sql_validation_total_ms += (time.time() - validation_start) * 1000
+
+        # Execute (unless QUERY_ONLY)
+        if mode == "QUERY_ONLY":
+            last_exec_error = None
+            break
+
         execution_start = time.time()
         try:
             result = execute_query(db, safe_sql, {}, dialect=dialect)
+            last_exec_error = None
+            query_execution_total_ms += (time.time() - execution_start) * 1000
+            break
         except QueryExecutionError as exc:
-            logger.error("Query execution failed: %s", exc)
-            return {
-                "type": "DB",
-                "mode": mode,
-                "sql": safe_sql,
-                "params": {},
-                "explanation": explanation,
-                "error": str(exc),
-                "answer_text": f"Query failed: {exc}",
-            }
-        timings.query_execution_ms = (time.time() - execution_start) * 1000
+            query_execution_total_ms += (time.time() - execution_start) * 1000
+            last_exec_error = exc
+            logger.warning("Query execution failed (attempt %d/%d): %s", attempt + 1, max_retries + 1, exc)
+            result = None
+
+    # Finalize timing buckets
+    timings.sql_validation_ms = sql_validation_total_ms
+    timings.query_execution_ms = query_execution_total_ms
+
+    if last_exec_error is not None and mode != "QUERY_ONLY":
+        # Return last attempt SQL + error (user can refine question)
+        timings.total_ms = (time.time() - total_start) * 1000
+        return {
+            "type": "DB",
+            "mode": mode,
+            "sql": safe_sql or _normalize_llm_sql(raw_sql),
+            "params": {},
+            "explanation": f"Generated SQL for: {message}",
+            "error": str(last_exec_error),
+            "answer_text": f"Query failed: {last_exec_error}",
+        }
+
+    explanation = f"Generated SQL for: {message}"
 
     # ── Step 6: Build final response ──────────────────────────────────────────
     timings.total_ms = (time.time() - total_start) * 1000

@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     LLM_MAX_CONNECTIONS: int = 10
     LLM_TIMEOUT_SECONDS: int = 600
     ENABLE_PERFORMANCE_MONITORING: bool = True
+    # ── LLM generation tuning ─────────────────────────────────────────────────
+    LLM_NUM_CTX: int = 8192
+    LLM_MAX_TOKENS: int = 512
+
+    # ── NL→SQL accuracy tuning ───────────────────────────────────────────────
+    NL2SQL_TOP_TABLES: int = 10
+    NL2SQL_MAX_RETRIES: int = 2
+
 
 
 @lru_cache

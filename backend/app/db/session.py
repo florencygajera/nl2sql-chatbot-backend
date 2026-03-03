@@ -355,3 +355,244 @@ def ping_database() -> bool:
         logger.error(f"Database ping failed: {e}")
         active_db_info["status"] = "unreachable"
         return False
+
+# ── Targeted schema helpers (improves NL→SQL accuracy) ───────────────────────
+
+def get_schema_catalog() -> str:
+    """Return an *untruncated* schema catalog (tables + columns).
+
+    Used for table selection/ranking.
+    Format matches get_schema_summary() closely (Table: ... then columns).
+    """
+    dialect = active_db_info.get("dialect", "unknown")
+    ignore_cols = {"insertedby", "inserteddatetime", "updatedby", "updateddatetime"}
+    ignore_tables = {"__efmigrationshistory", "sysdiagrams"}
+
+    if dialect in ("mssql", "postgresql", "mysql"):
+        if dialect == "mssql":
+            sql = text(
+                """
+                SELECT
+                    t.TABLE_SCHEMA,
+                    t.TABLE_NAME,
+                    c.COLUMN_NAME,
+                    c.DATA_TYPE
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN INFORMATION_SCHEMA.COLUMNS c
+                    ON c.TABLE_NAME = t.TABLE_NAME
+                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
+                """
+            )
+        elif dialect == "postgresql":
+            sql = text(
+                """
+                SELECT
+                    t.table_schema AS TABLE_SCHEMA,
+                    t.table_name AS TABLE_NAME,
+                    c.column_name AS COLUMN_NAME,
+                    c.data_type AS DATA_TYPE
+                FROM information_schema.tables t
+                JOIN information_schema.columns c
+                    ON c.table_name = t.table_name
+                    AND c.table_schema = t.table_schema
+                WHERE t.table_type = 'BASE TABLE'
+                  AND t.table_schema NOT IN ('pg_catalog', 'information_schema')
+                ORDER BY t.table_schema, t.table_name, c.ordinal_position
+                """
+            )
+        else:  # mysql
+            sql = text(
+                """
+                SELECT
+                    t.TABLE_SCHEMA AS TABLE_SCHEMA,
+                    t.TABLE_NAME AS TABLE_NAME,
+                    c.COLUMN_NAME AS COLUMN_NAME,
+                    c.DATA_TYPE AS DATA_TYPE
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN INFORMATION_SCHEMA.COLUMNS c
+                    ON c.TABLE_NAME = t.TABLE_NAME
+                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                  AND t.TABLE_SCHEMA = DATABASE()
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
+                """
+            )
+
+        with engine.connect() as conn:
+            rows = conn.execute(sql).fetchall()
+
+        lines: list[str] = []
+        current_table: str | None = None
+        for table_schema, table_name, col_name, data_type in rows:
+            if table_name and table_name.lower() in ignore_tables:
+                continue
+            if col_name and col_name.lower() in ignore_cols:
+                continue
+
+            full_table = f"{table_schema}.{table_name}" if dialect == "mssql" else (
+                table_name if table_schema in ("public", "", None) else f"{table_schema}.{table_name}"
+            )
+
+            if full_table != current_table:
+                if current_table is not None:
+                    lines.append("")
+                lines.append(f'Table: "{full_table}"')
+                current_table = full_table
+
+            lines.append(f'  - "{col_name}" ({data_type})')
+
+        return "\n".join(lines).strip()
+
+    # SQLite / fallback
+    inspector = inspect(engine)
+    lines: list[str] = []
+    for table_name in inspector.get_table_names():
+        if table_name.lower() in ignore_tables:
+            continue
+        lines.append(f'Table: "{table_name}"')
+        for col in inspector.get_columns(table_name):
+            if col["name"].lower() in ignore_cols:
+                continue
+            lines.append(f'  - "{col["name"]}" ({col["type"]})')
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def get_schema_for_tables(table_names: list[str]) -> str:
+    """Return schema text for only the requested tables (all columns).
+
+    table_names may include schema-qualified values (schema.table).
+    """
+    dialect = active_db_info.get("dialect", "unknown")
+    if not table_names:
+        return get_schema_summary()
+
+    wanted: list[tuple[str | None, str]] = []
+    for t in table_names:
+        t = (t or "").strip().strip('"')
+        if not t:
+            continue
+        if "." in t:
+            sch, tbl = t.split(".", 1)
+            wanted.append((sch, tbl))
+        else:
+            wanted.append((None, t))
+
+    ignore_cols = {"insertedby", "inserteddatetime", "updatedby", "updateddatetime"}
+    ignore_tables = {"__efmigrationshistory", "sysdiagrams"}
+
+    if dialect in ("mssql", "postgresql", "mysql"):
+        params: dict[str, str] = {}
+        conds: list[str] = []
+
+        if dialect == "mssql":
+            for i, (sch, tbl) in enumerate(wanted):
+                sch = sch or "dbo"
+                conds.append(f"(t.TABLE_SCHEMA = :sch{i} AND t.TABLE_NAME = :tbl{i})")
+                params[f"sch{i}"] = sch
+                params[f"tbl{i}"] = tbl
+            where = " OR ".join(conds) or "1=0"
+            sql = text(
+                f"""
+                SELECT
+                    t.TABLE_SCHEMA,
+                    t.TABLE_NAME,
+                    c.COLUMN_NAME,
+                    c.DATA_TYPE
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN INFORMATION_SCHEMA.COLUMNS c
+                    ON c.TABLE_NAME = t.TABLE_NAME
+                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                  AND ({where})
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
+                """
+            )
+        elif dialect == "postgresql":
+            for i, (sch, tbl) in enumerate(wanted):
+                sch = sch or "public"
+                conds.append(f"(t.table_schema = :sch{i} AND t.table_name = :tbl{i})")
+                params[f"sch{i}"] = sch
+                params[f"tbl{i}"] = tbl
+            where = " OR ".join(conds) or "1=0"
+            sql = text(
+                f"""
+                SELECT
+                    t.table_schema AS TABLE_SCHEMA,
+                    t.table_name AS TABLE_NAME,
+                    c.column_name AS COLUMN_NAME,
+                    c.data_type AS DATA_TYPE
+                FROM information_schema.tables t
+                JOIN information_schema.columns c
+                    ON c.table_name = t.table_name
+                    AND c.table_schema = t.table_schema
+                WHERE t.table_type = 'BASE TABLE'
+                  AND ({where})
+                ORDER BY t.table_schema, t.table_name, c.ordinal_position
+                """
+            )
+        else:  # mysql
+            for i, (_sch, tbl) in enumerate(wanted):
+                conds.append(f"(t.TABLE_SCHEMA = DATABASE() AND t.TABLE_NAME = :tbl{i})")
+                params[f"tbl{i}"] = tbl
+            where = " OR ".join(conds) or "1=0"
+            sql = text(
+                f"""
+                SELECT
+                    t.TABLE_SCHEMA AS TABLE_SCHEMA,
+                    t.TABLE_NAME AS TABLE_NAME,
+                    c.COLUMN_NAME AS COLUMN_NAME,
+                    c.DATA_TYPE AS DATA_TYPE
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN INFORMATION_SCHEMA.COLUMNS c
+                    ON c.TABLE_NAME = t.TABLE_NAME
+                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                  AND ({where})
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
+                """
+            )
+
+        with engine.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        lines: list[str] = []
+        current: str | None = None
+        for table_schema, table_name, col_name, data_type in rows:
+            if table_name and table_name.lower() in ignore_tables:
+                continue
+            if col_name and col_name.lower() in ignore_cols:
+                continue
+
+            full = f"{table_schema}.{table_name}" if dialect == "mssql" else (
+                table_name if table_schema in ("public", "", None) else f"{table_schema}.{table_name}"
+            )
+            if full != current:
+                if current is not None:
+                    lines.append("")
+                lines.append(f'Table: "{full}"')
+                current = full
+
+            lines.append(f'  - "{col_name}" ({data_type})')
+
+        return "\n".join(lines).strip() or get_schema_summary()
+
+    # SQLite fallback
+    inspector = inspect(engine)
+    names = set(inspector.get_table_names())
+    lines: list[str] = []
+    for _sch, tbl in wanted:
+        if tbl.lower() in ignore_tables:
+            continue
+        if tbl not in names:
+            continue
+        lines.append(f'Table: "{tbl}"')
+        for col in inspector.get_columns(tbl):
+            if col["name"].lower() in ignore_cols:
+                continue
+            lines.append(f'  - "{col["name"]}" ({col["type"]})')
+        lines.append("")
+
+    return "\n".join(lines).strip() or get_schema_summary()
