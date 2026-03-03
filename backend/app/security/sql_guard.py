@@ -144,35 +144,12 @@ def _strip_trailing_semicolon(sql: str) -> str:
 
 def _maybe_inject_limit(sql: str, dialect: str = "unknown") -> str:
     """
-    Inject a row limit for non-aggregate queries.
-    
-    - PostgreSQL/MySQL/SQLite: uses LIMIT N
-    - MSSQL: uses SELECT TOP N ... (injected after SELECT keyword)
+    Previously injected row limits automatically into every query.
+    Now disabled — queries return ALL rows by default.
+    The LLM prompt explicitly instructs the model not to add TOP/LIMIT
+    unless the user asks for it. If the user wants a subset, the LLM
+    will include TOP/LIMIT in the generated SQL itself.
     """
-    is_aggregate = bool(_AGGREGATE_PATTERN.search(sql))
-    has_limit = bool(_LIMIT_PATTERN.search(sql))
-    has_top = bool(_TOP_PATTERN.search(sql))
-    has_offset_fetch = bool(_OFFSET_FETCH_PATTERN.search(sql))
-
-    if is_aggregate or has_limit or has_top or has_offset_fetch:
-        return sql
-
-    limit = settings.DEFAULT_ROW_LIMIT
-
-    if dialect == "mssql":
-        # SQL Server uses SELECT TOP N ...
-        # Insert TOP after the first SELECT keyword
-        sql_stripped = sql.lstrip()
-        match = re.match(r"(SELECT\s+)(DISTINCT\s+)?", sql_stripped, re.IGNORECASE)
-        if match:
-            prefix = match.group(0)
-            rest = sql_stripped[len(prefix):]
-            sql = f"{prefix}TOP {limit} {rest}"
-        else:
-            # Fallback: just prepend at beginning (shouldn't happen for valid SELECT)
-            sql = f"SELECT TOP {limit} " + sql[7:]  # skip "SELECT "
-    else:
-        # PostgreSQL, MySQL, SQLite all support LIMIT
-        sql = f"{sql.rstrip()} LIMIT {limit}"
-
+    # No longer inject any automatic limits.
+    # Let the query return all matching rows.
     return sql

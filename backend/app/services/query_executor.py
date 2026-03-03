@@ -115,14 +115,6 @@ def execute_query(
         columns = list(cursor.keys())
         raw_rows = cursor.fetchall()
 
-        # Enforce hard row ceiling (defensive; SQL guard already added LIMIT/TOP)
-        if len(raw_rows) > settings.MAX_ROW_LIMIT:
-            raw_rows = raw_rows[: settings.MAX_ROW_LIMIT]
-            logger.warning(
-                "Result set exceeded max_row_limit (%d); truncated.",
-                settings.MAX_ROW_LIMIT,
-            )
-
         # Convert rows to plain lists for JSON serialisation
         rows = [_serialise_row(row) for row in raw_rows]
 

@@ -98,6 +98,8 @@ def _build_mssql_prompt(user_message: str, schema: str) -> str:
 Rules:
 - Use ONLY tables and columns from the schema below.
 - Use [brackets] for all names. Use N'' for non-English text.
+- NEVER add TOP, LIMIT, or any row-restricting clause unless the user explicitly asks for a specific number of rows (e.g. "show me top 10", "first 5 rows", etc.).
+- Return ALL matching rows by default.
 
 Example queries:
 - SELECT * FROM {example_table}
@@ -122,6 +124,8 @@ CRITICAL POSTGRES RULES:
   Example: SELECT "Id" FROM "User_Master";
 - NEVER output doubled quotes like ""User_Master"".
 - Do not invent tables/columns. Use only the schema below.
+- NEVER add LIMIT or any row-restricting clause unless the user explicitly asks for a specific number of rows.
+- Return ALL matching rows by default.
 
 Database Schema:
 {schema}
@@ -135,6 +139,8 @@ def _build_mysql_prompt(user_message: str, schema: str) -> str:
 Return ONLY ONE MySQL SELECT query. No markdown. No explanations.
 Do NOT wrap output in ```sql fences.
 Do not invent tables/columns. Use only the schema below.
+NEVER add LIMIT or any row-restricting clause unless the user explicitly asks for a specific number of rows.
+Return ALL matching rows by default.
 
 Database Schema:
 {schema}
@@ -148,6 +154,8 @@ def _build_sqlite_prompt(user_message: str, schema: str) -> str:
 Return ONLY ONE SQLite SELECT query. No markdown. No explanations.
 Do NOT wrap output in ```sql fences.
 Do not invent tables/columns. Use only the schema below.
+NEVER add LIMIT or any row-restricting clause unless the user explicitly asks for a specific number of rows.
+Return ALL matching rows by default.
 
 Database Schema:
 {schema}
@@ -162,6 +170,8 @@ Return ONLY ONE generic SELECT query. No markdown. No explanations.
 Do NOT wrap output in ```sql fences.
 Avoid dialect-specific quoting unless necessary.
 Do not invent tables/columns. Use only the schema below.
+NEVER add LIMIT, TOP, or any row-restricting clause unless the user explicitly asks for a specific number of rows.
+Return ALL matching rows by default.
 
 Database Schema:
 {schema}
