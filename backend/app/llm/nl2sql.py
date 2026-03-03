@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 from app.llm.async_ollama_client import generate_async
 from app.core.config import get_settings
+
 settings = get_settings()
 
 
-
 def _normalize_llm_sql(raw_sql: str) -> str:
-    """Normalize LLM SQL so it is executable:
+    """
+    Normalize LLM SQL so it is executable:
     - remove ```sql fences
     - remove surrounding quotes (if whole query is wrapped)
     - fix doubled identifier quotes: ""Table"" -> "Table"
@@ -30,153 +31,229 @@ def _normalize_llm_sql(raw_sql: str) -> str:
     # Fix doubled quotes
     s = s.replace('""', '"')
 
-    return s.strip()
+    # Remove trailing semicolons/spaces safely
+    s = s.strip().rstrip(";").strip()
 
-async def generate_sql(user_message: str, schema_hint: str = "", dialect: str = "unknown") -> str:
-    """
-    Generate SQL from a natural language question using the LLM.
-    
-    Args:
-        user_message: The user's natural language question.
-        schema_hint: Database schema information (from live introspection).
-        dialect: Database dialect ("mssql", "postgresql", "mysql", "sqlite", "unknown").
-    
-    Returns:
-        Generated SQL string.
-    """
-    extra = schema_hint.strip()
-    if not extra:
-        extra = "No schema information available."
+    return s
 
-    # --- Determine dialect for prompt ---
-    dialect_lower = dialect.lower() if dialect else "unknown"
-    
-    if dialect_lower == "mssql":
-        prompt = _build_mssql_prompt(user_message, extra)
-    elif dialect_lower in ("postgresql", "postgres"):
-        prompt = _build_postgres_prompt(user_message, extra)
-    elif dialect_lower == "mysql":
-        prompt = _build_mysql_prompt(user_message, extra)
-    elif dialect_lower == "sqlite":
-        prompt = _build_sqlite_prompt(user_message, extra)
-    else:
-        # Try to detect from user message
-        user_lower = (user_message or "").lower()
-        if any(k in user_lower for k in ["mssql", "sql server", "sqlserver"]):
-            prompt = _build_mssql_prompt(user_message, extra)
-        elif any(k in user_lower for k in ["postgresql", "postgres", "postgre", "pg"]):
-            prompt = _build_postgres_prompt(user_message, extra)
-        elif "mysql" in user_lower:
-            prompt = _build_mysql_prompt(user_message, extra)
-        elif "sqlite" in user_lower:
-            prompt = _build_sqlite_prompt(user_message, extra)
+
+def _extract_table_lines(schema: str) -> list[str]:
+    """
+    Return schema lines that look like table declarations.
+    Handles:
+      - Table: dbo.Users
+      - Table: "dbo.Users"
+      - dbo.Users(...)
+      - [dbo].[Users](...)
+    """
+    lines = []
+    for ln in (schema or "").splitlines():
+        t = ln.strip()
+        if not t:
+            continue
+        if t.lower().startswith("table:"):
+            lines.append(t)
+        elif re.match(r'^(?:"?[\w]+(?:\.[\w]+)?"?)\s*\(', t):
+            lines.append(t)
+        elif re.match(r'^\[[\w]+\]\.\[[\w]+\]\s*\(', t):
+            lines.append(t)
+        elif re.match(r'^\[[\w]+\]\.\[[\w]+\]$', t):
+            lines.append(t)
+    return lines
+
+
+def _extract_first_table_for_mssql_example(schema: str) -> str:
+    """
+    Get an example table name in MSSQL bracket format.
+    Falls back safely.
+    """
+    example_table = "[dbo].[TableName]"
+    for line in _extract_table_lines(schema):
+        if line.lower().startswith("table:"):
+            raw = line.split(":", 1)[1].strip().strip('"').strip("'")
         else:
-            # Default to generic SQL
-            prompt = _build_generic_prompt(user_message, extra)
+            raw = line.split("(", 1)[0].strip().strip('"').strip("'")
 
-    raw = (await generate_async(prompt=prompt, temperature=0.0, max_tokens=settings.LLM_MAX_TOKENS, use_cache=True)).strip()
-    raw = _normalize_llm_sql(raw)
-
-    return raw
+        # Normalize raw like dbo.Users or Users
+        raw = raw.replace("[", "").replace("]", "")
+        if "." in raw:
+            a, b = raw.split(".", 1)
+            example_table = f"[{a}].[{b}]"
+        else:
+            example_table = f"[{raw}]"
+        break
+    return example_table
 
 
 def _build_mssql_prompt(user_message: str, schema: str) -> str:
-    # Extract first table name from schema for use in examples
-    example_table = "[TableName]"
-    for line in schema.splitlines():
-        if line.startswith('Table: '):
-            raw = line.split('Table: ', 1)[1].strip().strip('"')
-            if '.' in raw:
-                parts = raw.split('.', 1)
-                example_table = f"[{parts[0]}].[{parts[1]}]"
-            else:
-                example_table = f"[{raw}]"
-            break
+    example_table = _extract_first_table_for_mssql_example(schema)
 
-    return f"""Write a T-SQL SELECT query for SQL Server. Output ONLY the SQL query, nothing else.
+    return f"""You are an expert SQL Server (T-SQL) query generator.
 
-Rules:
-- Use ONLY tables and columns from the schema below.
-- Use [brackets] for all names. Use N'' for non-English text.
-- NEVER add TOP, LIMIT, or any row-restricting clause unless the user explicitly asks for a specific number of rows (e.g. "show me top 10", "first 5 rows", etc.).
-- Return ALL matching rows by default.
+Return ONLY ONE executable T-SQL SELECT statement.
+- No markdown, no explanations, no commentary.
+- Do NOT wrap output in ```sql fences.
 
-Example queries:
-- SELECT * FROM {example_table}
-- SELECT DISTINCT [PropertyType] FROM {example_table} WHERE [PropertyType] IN (N'value1', N'value2')
-- SELECT COUNT(*) FROM {example_table} WHERE [ColumnName] = N'value'
+HARD RULES (must follow):
+1) Use ONLY tables and columns that appear in the schema provided below.
+2) Always use [brackets] for ALL identifiers: [schema].[Table], [ColumnName].
+3) Do NOT invent joins. Only join when there is an obvious key match:
+   - [Id] to [<Other>Id] OR [<Other>Id] to [Id]
+   - If no obvious join key exists, do NOT join; instead ask a question by returning:
+     SELECT N'CLARIFY: <your question here>' AS [NeedMoreInfo];
+4) Do NOT add TOP/OFFSET/FETCH unless the user explicitly asks for a row limit.
+5) Prefer simple, correct queries over complex guesses.
+6) If filtering by text values, use N'' for Unicode text.
+
+QUALITY RULES:
+- Select only columns relevant to the question (avoid SELECT * unless user says "all columns").
+- If the user asks for “report/summary/total/count”, use GROUP BY / aggregates as appropriate.
+- If time range is missing for “report/history”, ask for timeframe using CLARIFY output.
 
 Schema:
 {schema}
 
-Question: {user_message}
+User question:
+{user_message}
+
 SQL:""".strip()
 
 
 def _build_postgres_prompt(user_message: str, schema: str) -> str:
-    return f"""You are a SQL generator for PostgreSQL.
+    return f"""You are an expert PostgreSQL SQL query generator.
 
-Return ONLY ONE PostgreSQL SELECT query. No markdown. No explanations.
-Do NOT wrap output in ```sql fences.
+Return ONLY ONE executable PostgreSQL SELECT statement.
+- No markdown, no explanations.
+- Do NOT wrap output in ```sql fences.
 
-CRITICAL POSTGRES RULES:
-- ALWAYS use double quotes for ALL table and column names exactly as in the schema.
-  Example: SELECT "Id" FROM "User_Master";
-- NEVER output doubled quotes like ""User_Master"".
-- Do not invent tables/columns. Use only the schema below.
-- NEVER add LIMIT or any row-restricting clause unless the user explicitly asks for a specific number of rows.
-- Return ALL matching rows by default.
+HARD RULES:
+1) Use ONLY tables and columns that appear in the schema provided below.
+2) Always use double quotes for identifiers exactly as they appear in schema.
+3) Do NOT invent joins. Only join with an obvious key match ("id" to "<x>_id" etc).
+   If unclear, return:
+   SELECT 'CLARIFY: <your question here>' AS "NeedMoreInfo";
+4) Do NOT add LIMIT unless the user explicitly asks.
 
-Database Schema:
+Schema:
 {schema}
 
-Question: {user_message}""".strip()
+User question:
+{user_message}
+
+SQL:""".strip()
 
 
 def _build_mysql_prompt(user_message: str, schema: str) -> str:
-    return f"""You are a SQL generator for MySQL.
+    return f"""You are an expert MySQL SQL query generator.
 
-Return ONLY ONE MySQL SELECT query. No markdown. No explanations.
-Do NOT wrap output in ```sql fences.
-Do not invent tables/columns. Use only the schema below.
-NEVER add LIMIT or any row-restricting clause unless the user explicitly asks for a specific number of rows.
-Return ALL matching rows by default.
+Return ONLY ONE executable MySQL SELECT statement.
+- No markdown, no explanations.
+- Do NOT wrap output in ```sql fences.
 
-Database Schema:
+HARD RULES:
+1) Use ONLY tables and columns that appear in the schema provided below.
+2) Do NOT invent joins. Only join with an obvious key match (id to <x>_id etc).
+   If unclear, return:
+   SELECT 'CLARIFY: <your question here>' AS NeedMoreInfo;
+3) Do NOT add LIMIT unless the user explicitly asks.
+
+Schema:
 {schema}
 
-Question: {user_message}""".strip()
+User question:
+{user_message}
+
+SQL:""".strip()
 
 
 def _build_sqlite_prompt(user_message: str, schema: str) -> str:
-    return f"""You are a SQL generator for SQLite.
+    return f"""You are an expert SQLite SQL query generator.
 
-Return ONLY ONE SQLite SELECT query. No markdown. No explanations.
-Do NOT wrap output in ```sql fences.
-Do not invent tables/columns. Use only the schema below.
-NEVER add LIMIT or any row-restricting clause unless the user explicitly asks for a specific number of rows.
-Return ALL matching rows by default.
+Return ONLY ONE executable SQLite SELECT statement.
+- No markdown, no explanations.
+- Do NOT wrap output in ```sql fences.
 
-Database Schema:
+HARD RULES:
+1) Use ONLY tables and columns that appear in the schema provided below.
+2) Do NOT invent joins. Only join with an obvious key match (id to <x>_id etc).
+   If unclear, return:
+   SELECT 'CLARIFY: <your question here>' AS NeedMoreInfo;
+3) Do NOT add LIMIT unless the user explicitly asks.
+
+Schema:
 {schema}
 
-Question: {user_message}""".strip()
+User question:
+{user_message}
+
+SQL:""".strip()
 
 
 def _build_generic_prompt(user_message: str, schema: str) -> str:
-    return f"""You are a SQL generator.
+    return f"""You are an expert SQL query generator.
 
-Return ONLY ONE generic SELECT query. No markdown. No explanations.
-Do NOT wrap output in ```sql fences.
-Avoid dialect-specific quoting unless necessary.
-Do not invent tables/columns. Use only the schema below.
-NEVER add LIMIT, TOP, or any row-restricting clause unless the user explicitly asks for a specific number of rows.
-Return ALL matching rows by default.
+Return ONLY ONE executable SELECT statement.
+- No markdown, no explanations.
+- Do NOT wrap output in ```sql fences.
 
-Database Schema:
+HARD RULES:
+1) Use ONLY tables and columns that appear in the schema provided below.
+2) Do NOT invent joins. Only join with an obvious key match.
+   If unclear, return:
+   SELECT 'CLARIFY: <your question here>' AS NeedMoreInfo;
+3) Do NOT add LIMIT/TOP unless the user explicitly asks.
+
+Schema:
 {schema}
 
-Question: {user_message}""".strip()
+User question:
+{user_message}
+
+SQL:""".strip()
+
+
+async def generate_sql(user_message: str, schema_hint: str = "", dialect: str = "unknown") -> str:
+    """
+    Generate SQL from a natural language question using the LLM.
+
+    Key upgrade:
+    - Adds a CLARIFY escape hatch so the model does not guess joins/timeframes.
+    - Keeps temperature at 0.0 and uses configurable max tokens.
+    """
+    schema = (schema_hint or "").strip() or "No schema information available."
+    dialect_lower = (dialect or "unknown").lower()
+
+    if dialect_lower == "mssql":
+        prompt = _build_mssql_prompt(user_message, schema)
+    elif dialect_lower in ("postgresql", "postgres"):
+        prompt = _build_postgres_prompt(user_message, schema)
+    elif dialect_lower == "mysql":
+        prompt = _build_mysql_prompt(user_message, schema)
+    elif dialect_lower == "sqlite":
+        prompt = _build_sqlite_prompt(user_message, schema)
+    else:
+        # Try to detect from user message
+        user_lower = (user_message or "").lower()
+        if any(k in user_lower for k in ["mssql", "sql server", "sqlserver"]):
+            prompt = _build_mssql_prompt(user_message, schema)
+        elif any(k in user_lower for k in ["postgresql", "postgres", "postgre", "pg"]):
+            prompt = _build_postgres_prompt(user_message, schema)
+        elif "mysql" in user_lower:
+            prompt = _build_mysql_prompt(user_message, schema)
+        elif "sqlite" in user_lower:
+            prompt = _build_sqlite_prompt(user_message, schema)
+        else:
+            prompt = _build_generic_prompt(user_message, schema)
+
+    raw = await generate_async(
+        prompt=prompt,
+        temperature=0.0,
+        max_tokens=getattr(settings, "LLM_MAX_TOKENS", 512),
+        use_cache=True,
+    )
+    raw = _normalize_llm_sql((raw or "").strip())
+
+    return raw
 
 
 # Exports for optimized service

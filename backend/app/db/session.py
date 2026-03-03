@@ -1,5 +1,12 @@
 """
 Database engine, session factory, and schema introspection utilities.
+
+Upgrades in this version
+------------------------
+✅ Adds foreign-key relationship extraction (sys.foreign_keys / pg / mysql) for better joins
+✅ get_schema_catalog() is untruncated and consistent format
+✅ get_schema_for_tables() returns ONLY requested tables + ALL columns + FK hints
+✅ Keeps existing connection handling (ODBC SQL Server included)
 """
 
 from __future__ import annotations
@@ -22,9 +29,8 @@ def _mask_db_url(url: str) -> str:
     """Hide passwords in URLs for safe logging / status responses."""
     try:
         import re
-        # Handle odbc_connect URLs
         if "odbc_connect" in url:
-            return re.sub(r'PWD=[^;%]*', 'PWD=***', url)
+            return re.sub(r"PWD=[^;%]*", "PWD=***", url)
         if "://" not in url or "@" not in url:
             return url
         scheme, rest = url.split("://", 1)
@@ -42,22 +48,21 @@ def _mask_db_url(url: str) -> str:
 
 def _detect_db_dialect(url: str) -> str:
     """Detect the database dialect from the URL."""
-    url_lower = url.lower()
+    url_lower = (url or "").lower()
     if "mssql" in url_lower or "sqlserver" in url_lower:
         return "mssql"
-    elif "postgresql" in url_lower or "postgres" in url_lower:
+    if "postgresql" in url_lower or "postgres" in url_lower:
         return "postgresql"
-    elif "mysql" in url_lower:
+    if "mysql" in url_lower:
         return "mysql"
-    elif "sqlite" in url_lower:
+    if "sqlite" in url_lower:
         return "sqlite"
-    elif "oracle" in url_lower:
+    if "oracle" in url_lower:
         return "oracle"
     return "unknown"
 
 
-# NOTE: This is an in-memory state (single-process). If you run multiple
-# workers, each worker keeps its own active DB engine.
+# NOTE: single-process in-memory state. Multiple workers => separate state.
 active_db_info = {
     "url": settings.DATABASE_URL,
     "masked_url": _mask_db_url(settings.DATABASE_URL),
@@ -79,31 +84,23 @@ def create_app_engine(url: str):
         return create_engine(url, **kwargs)
 
     # Common pool settings for server DBs
-    kwargs.update({
-        "pool_size": settings.DB_POOL_SIZE,
-        "max_overflow": settings.DB_MAX_OVERFLOW,
-        "pool_timeout": settings.DB_POOL_TIMEOUT,
-        "pool_recycle": settings.DB_POOL_RECYCLE,
-    })
+    kwargs.update(
+        {
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW,
+            "pool_timeout": settings.DB_POOL_TIMEOUT,
+            "pool_recycle": settings.DB_POOL_RECYCLE,
+        }
+    )
 
     dialect = _detect_db_dialect(url)
 
-    # Postgres-specific connect args
     if dialect == "postgresql":
-        kwargs["connect_args"] = {
-            "connect_timeout": 10,
-            "options": "-c statement_timeout=30000"
-        }
-
-    # MSSQL: if using odbc_connect URL, do NOT pass connect_args —
-    # the Connection Timeout is already embedded in the ODBC string.
-    # Passing connect_args overrides it and causes 30s timeouts.
+        kwargs["connect_args"] = {"connect_timeout": 10, "options": "-c statement_timeout=30000"}
     elif dialect == "mssql":
+        # If using odbc_connect URL, do NOT pass connect_args; timeout is in ODBC string.
         if "odbc_connect" not in url:
             kwargs["connect_args"] = {"timeout": 30}
-        # else: no connect_args needed; ODBC string has Connection Timeout=60
-
-    # MySQL and others
     else:
         kwargs["connect_args"] = {"connect_timeout": 10}
 
@@ -112,7 +109,7 @@ def create_app_engine(url: str):
         settings.DB_POOL_SIZE,
         settings.DB_MAX_OVERFLOW,
         settings.DB_POOL_TIMEOUT,
-        settings.DB_POOL_RECYCLE
+        settings.DB_POOL_RECYCLE,
     )
 
     return create_engine(url, **kwargs)
@@ -129,10 +126,7 @@ SessionLocal = sessionmaker(
 
 
 def _test_engine_connect(new_url: str) -> None:
-    """
-    Fast connection test with DB-specific timeout args to avoid pyodbc prelogin hangs
-    and to prevent invalid attributes from being passed to the wrong driver.
-    """
+    """Fast connection test with DB-specific timeout args."""
     test_kwargs = {"pool_pre_ping": True}
     dialect = _detect_db_dialect(new_url)
 
@@ -144,7 +138,6 @@ def _test_engine_connect(new_url: str) -> None:
         test_kwargs["connect_args"] = {"connect_timeout": 10}
     elif dialect != "mssql":
         test_kwargs["connect_args"] = {"connect_timeout": 10}
-    # mssql with odbc_connect: no connect_args — timeout is in ODBC string
 
     test_engine = create_engine(new_url, **test_kwargs)
     try:
@@ -170,7 +163,6 @@ def set_database_url(new_url: str) -> None:
         test_kwargs["connect_args"] = {"connect_timeout": 10}
     elif dialect != "mssql":
         test_kwargs["connect_args"] = {"connect_timeout": 10}
-    # mssql with odbc_connect: no connect_args — timeout is in ODBC string
 
     test_engine = create_engine(new_url, **test_kwargs)
     try:
@@ -193,11 +185,7 @@ def set_database_url(new_url: str) -> None:
 
 def set_database_source(*, attach_mode: str, db_type: str, details: dict) -> None:
     """Attach metadata about how the current DB was configured."""
-    active_db_info["source"] = {
-        "attach_mode": attach_mode,
-        "db_type": db_type,
-        "details": details,
-    }
+    active_db_info["source"] = {"attach_mode": attach_mode, "db_type": db_type, "details": details}
 
 
 def reset_database_url() -> None:
@@ -209,6 +197,7 @@ def reset_database_url() -> None:
 
 def get_db() -> Generator[Session, None, None]:
     import time
+
     start = time.time()
     db = SessionLocal()
     acquire_time = time.time() - start
@@ -226,125 +215,6 @@ def get_current_dialect() -> str:
     return active_db_info.get("dialect", "unknown")
 
 
-def get_schema_summary() -> str:
-    """
-    Fetch schema exactly once using a single SQL query (no N+1 inspector calls).
-    
-    Uses INFORMATION_SCHEMA.COLUMNS for MSSQL/PostgreSQL/MySQL (one round trip),
-    and falls back to SQLAlchemy inspector for SQLite.
-    """
-    dialect = active_db_info.get("dialect", "unknown")
-    ignore_cols = {"insertedby", "inserteddatetime", "updatedby", "updateddatetime"}
-    ignore_tables = {"__efmigrationshistory", "sysdiagrams"}
-
-    # ── Single-query path for server databases ─────────────────────────────────
-    if dialect in ("mssql", "postgresql", "mysql"):
-        if dialect == "mssql":
-            sql = text("""
-                SELECT
-                    t.TABLE_SCHEMA,
-                    t.TABLE_NAME,
-                    c.COLUMN_NAME,
-                    c.DATA_TYPE
-                FROM INFORMATION_SCHEMA.TABLES t
-                JOIN INFORMATION_SCHEMA.COLUMNS c
-                    ON c.TABLE_NAME = t.TABLE_NAME
-                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
-                WHERE t.TABLE_TYPE = 'BASE TABLE'
-                ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
-            """)
-        elif dialect == "postgresql":
-            sql = text("""
-                SELECT
-                    t.table_name AS TABLE_NAME,
-                    c.column_name AS COLUMN_NAME,
-                    c.data_type AS DATA_TYPE
-                FROM information_schema.tables t
-                JOIN information_schema.columns c
-                    ON c.table_name = t.table_name
-                    AND c.table_schema = t.table_schema
-                WHERE t.table_type = 'BASE TABLE'
-                  AND t.table_schema = 'public'
-                ORDER BY t.table_name, c.ordinal_position
-            """)
-        else:  # mysql
-            sql = text("""
-                SELECT
-                    t.TABLE_NAME,
-                    c.COLUMN_NAME,
-                    c.DATA_TYPE
-                FROM INFORMATION_SCHEMA.TABLES t
-                JOIN INFORMATION_SCHEMA.COLUMNS c
-                    ON c.TABLE_NAME = t.TABLE_NAME
-                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
-                WHERE t.TABLE_TYPE = 'BASE TABLE'
-                  AND t.TABLE_SCHEMA = DATABASE()
-                ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
-            """)
-
-        try:
-            with engine.connect() as conn:
-                rows = conn.execute(sql).fetchall()
-
-            lines: list[str] = []
-            current_table = None
-            tables_processed = 0
-            col_count = 0
-            for row in rows:
-                if dialect == "mssql":
-                    table_schema, table_name, col_name, data_type = row
-                    full_table_name = f'{table_schema}.{table_name}'
-                else:
-                    table_name, col_name, data_type = row
-                    full_table_name = table_name
-
-                if table_name.lower() in ignore_tables:
-                    continue
-                if col_name.lower() in ignore_cols:
-                    continue
-                if full_table_name != current_table:
-                    if tables_processed >= 50:
-                        lines.append("... (schema truncated)")
-                        break
-                    
-                    if current_table is not None:
-                        lines.append("")
-                    lines.append(f'Table: "{full_table_name}"')
-                    current_table = full_table_name
-                    tables_processed += 1
-                    col_count = 0
-                col_count += 1
-                if col_count <= 15:
-                    lines.append(f'  - "{col_name}" ({data_type})')
-            return "\n".join(lines).strip()
-
-        except Exception as e:
-            logger.warning("Fast schema query failed (%s), falling back to inspector", e)
-            # Fall through to inspector below
-
-    # ── SQLite (and fallback) path ─────────────────────────────────────────────
-    inspector = inspect(engine)
-    lines = []
-    tables_processed = 0
-    for table_name in inspector.get_table_names():
-        if table_name.lower() in ignore_tables:
-            continue
-        if tables_processed >= 50:
-            lines.append("... (schema truncated)")
-            break
-        lines.append(f'Table: "{table_name}"')
-        tables_processed += 1
-        col_count = 0
-        for col in inspector.get_columns(table_name):
-            if col['name'].lower() in ignore_cols:
-                continue
-            col_count += 1
-            if col_count <= 15:
-                lines.append(f'  - "{col["name"]}" ({col["type"]})')
-        lines.append("")
-    return "\n".join(lines).strip()
-
-
 def ping_database() -> bool:
     try:
         with engine.connect() as conn:
@@ -352,17 +222,111 @@ def ping_database() -> bool:
         active_db_info["status"] = "connected"
         return True
     except Exception as e:
-        logger.error(f"Database ping failed: {e}")
+        logger.error("Database ping failed: %s", e)
         active_db_info["status"] = "unreachable"
         return False
 
-# ── Targeted schema helpers (improves NL→SQL accuracy) ───────────────────────
 
-def get_schema_catalog() -> str:
-    """Return an *untruncated* schema catalog (tables + columns).
+# ── FK introspection (KEY accuracy booster) ───────────────────────────────────
 
-    Used for table selection/ranking.
-    Format matches get_schema_summary() closely (Table: ... then columns).
+def get_foreign_keys_catalog() -> str:
+    """
+    Return foreign key relationships as text hints:
+      FK: dbo.Child(ChildCol) -> dbo.Parent(ParentCol)
+
+    If DB has no FK constraints, returns empty string.
+    """
+    dialect = active_db_info.get("dialect", "unknown")
+
+    try:
+        if dialect == "mssql":
+            sql = text(
+                """
+                SELECT
+                  OBJECT_SCHEMA_NAME(fk.parent_object_id) AS parent_schema,
+                  OBJECT_NAME(fk.parent_object_id)        AS parent_table,
+                  pc.name                                  AS parent_column,
+                  OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS ref_schema,
+                  OBJECT_NAME(fk.referenced_object_id)        AS ref_table,
+                  rc.name                                  AS ref_column
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fkc
+                  ON fk.object_id = fkc.constraint_object_id
+                JOIN sys.columns pc
+                  ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+                JOIN sys.columns rc
+                  ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+                ORDER BY parent_schema, parent_table
+                """
+            )
+            with engine.connect() as conn:
+                rows = conn.execute(sql).fetchall()
+
+        elif dialect == "postgresql":
+            sql = text(
+                """
+                SELECT
+                  tc.table_schema AS parent_schema,
+                  tc.table_name   AS parent_table,
+                  kcu.column_name AS parent_column,
+                  ccu.table_schema AS ref_schema,
+                  ccu.table_name   AS ref_table,
+                  ccu.column_name  AS ref_column
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                 AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage ccu
+                  ON ccu.constraint_name = tc.constraint_name
+                 AND ccu.table_schema = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                ORDER BY parent_schema, parent_table
+                """
+            )
+            with engine.connect() as conn:
+                rows = conn.execute(sql).fetchall()
+
+        elif dialect == "mysql":
+            sql = text(
+                """
+                SELECT
+                  kcu.TABLE_SCHEMA  AS parent_schema,
+                  kcu.TABLE_NAME    AS parent_table,
+                  kcu.COLUMN_NAME   AS parent_column,
+                  kcu.REFERENCED_TABLE_SCHEMA AS ref_schema,
+                  kcu.REFERENCED_TABLE_NAME   AS ref_table,
+                  kcu.REFERENCED_COLUMN_NAME  AS ref_column
+                FROM information_schema.KEY_COLUMN_USAGE kcu
+                WHERE kcu.REFERENCED_TABLE_NAME IS NOT NULL
+                  AND kcu.TABLE_SCHEMA = DATABASE()
+                ORDER BY parent_table
+                """
+            )
+            with engine.connect() as conn:
+                rows = conn.execute(sql).fetchall()
+        else:
+            return ""
+
+        if not rows:
+            return ""
+
+        lines = ["Foreign Keys:"]
+        for parent_schema, parent_table, parent_col, ref_schema, ref_table, ref_col in rows:
+            p_full = f"{parent_schema}.{parent_table}" if parent_schema else str(parent_table)
+            r_full = f"{ref_schema}.{ref_table}" if ref_schema else str(ref_table)
+            lines.append(f"  FK: {p_full}({parent_col}) -> {r_full}({ref_col})")
+        return "\n".join(lines).strip()
+
+    except Exception as exc:
+        logger.warning("FK introspection failed: %s", exc)
+        return ""
+
+
+# ── Schema introspection (summary + catalog + targeted) ───────────────────────
+
+def get_schema_summary() -> str:
+    """
+    Truncated schema summary (fast preview): max 50 tables, 15 columns/table.
     """
     dialect = active_db_info.get("dialect", "unknown")
     ignore_cols = {"insertedby", "inserteddatetime", "updatedby", "updateddatetime"}
@@ -376,7 +340,8 @@ def get_schema_catalog() -> str:
                     t.TABLE_SCHEMA,
                     t.TABLE_NAME,
                     c.COLUMN_NAME,
-                    c.DATA_TYPE
+                    c.DATA_TYPE,
+                    c.ORDINAL_POSITION
                 FROM INFORMATION_SCHEMA.TABLES t
                 JOIN INFORMATION_SCHEMA.COLUMNS c
                     ON c.TABLE_NAME = t.TABLE_NAME
@@ -390,9 +355,10 @@ def get_schema_catalog() -> str:
                 """
                 SELECT
                     t.table_schema AS TABLE_SCHEMA,
-                    t.table_name AS TABLE_NAME,
-                    c.column_name AS COLUMN_NAME,
-                    c.data_type AS DATA_TYPE
+                    t.table_name   AS TABLE_NAME,
+                    c.column_name  AS COLUMN_NAME,
+                    c.data_type    AS DATA_TYPE,
+                    c.ordinal_position AS ORDINAL_POSITION
                 FROM information_schema.tables t
                 JOIN information_schema.columns c
                     ON c.table_name = t.table_name
@@ -407,9 +373,139 @@ def get_schema_catalog() -> str:
                 """
                 SELECT
                     t.TABLE_SCHEMA AS TABLE_SCHEMA,
-                    t.TABLE_NAME AS TABLE_NAME,
-                    c.COLUMN_NAME AS COLUMN_NAME,
-                    c.DATA_TYPE AS DATA_TYPE
+                    t.TABLE_NAME   AS TABLE_NAME,
+                    c.COLUMN_NAME  AS COLUMN_NAME,
+                    c.DATA_TYPE    AS DATA_TYPE,
+                    c.ORDINAL_POSITION AS ORDINAL_POSITION
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN INFORMATION_SCHEMA.COLUMNS c
+                    ON c.TABLE_NAME = t.TABLE_NAME
+                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                  AND t.TABLE_SCHEMA = DATABASE()
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
+                """
+            )
+
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(sql).fetchall()
+
+            lines: list[str] = []
+            current_table: str | None = None
+            tables_processed = 0
+            col_count = 0
+
+            for table_schema, table_name, col_name, data_type, _pos in rows:
+                if table_name and table_name.lower() in ignore_tables:
+                    continue
+                if col_name and col_name.lower() in ignore_cols:
+                    continue
+
+                full_table = (
+                    f"{table_schema}.{table_name}"
+                    if dialect == "mssql"
+                    else (table_name if table_schema in ("public", "", None) else f"{table_schema}.{table_name}")
+                )
+
+                if full_table != current_table:
+                    if tables_processed >= 50:
+                        lines.append("... (schema truncated)")
+                        break
+                    if current_table is not None:
+                        lines.append("")
+                    lines.append(f'Table: "{full_table}"')
+                    current_table = full_table
+                    tables_processed += 1
+                    col_count = 0
+
+                col_count += 1
+                if col_count <= 15:
+                    lines.append(f'  - "{col_name}" ({data_type})')
+
+            return "\n".join(lines).strip()
+
+        except Exception as e:
+            logger.warning("Fast schema query failed (%s), falling back to inspector", e)
+
+    # SQLite / fallback
+    inspector = inspect(engine)
+    lines: list[str] = []
+    tables_processed = 0
+    for table_name in inspector.get_table_names():
+        if table_name.lower() in ignore_tables:
+            continue
+        if tables_processed >= 50:
+            lines.append("... (schema truncated)")
+            break
+        lines.append(f'Table: "{table_name}"')
+        tables_processed += 1
+        col_count = 0
+        for col in inspector.get_columns(table_name):
+            if col["name"].lower() in ignore_cols:
+                continue
+            col_count += 1
+            if col_count <= 15:
+                lines.append(f'  - "{col["name"]}" ({col["type"]})')
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def get_schema_catalog() -> str:
+    """
+    Untruncated schema catalog: ALL tables and ALL columns.
+    Format matches get_schema_summary() (Table: ... + columns).
+    Appends FK hints at the end (if present).
+    """
+    dialect = active_db_info.get("dialect", "unknown")
+    ignore_cols = {"insertedby", "inserteddatetime", "updatedby", "updateddatetime"}
+    ignore_tables = {"__efmigrationshistory", "sysdiagrams"}
+
+    if dialect in ("mssql", "postgresql", "mysql"):
+        if dialect == "mssql":
+            sql = text(
+                """
+                SELECT
+                    t.TABLE_SCHEMA,
+                    t.TABLE_NAME,
+                    c.COLUMN_NAME,
+                    c.DATA_TYPE,
+                    c.ORDINAL_POSITION
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN INFORMATION_SCHEMA.COLUMNS c
+                    ON c.TABLE_NAME = t.TABLE_NAME
+                    AND c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
+                """
+            )
+        elif dialect == "postgresql":
+            sql = text(
+                """
+                SELECT
+                    t.table_schema AS TABLE_SCHEMA,
+                    t.table_name   AS TABLE_NAME,
+                    c.column_name  AS COLUMN_NAME,
+                    c.data_type    AS DATA_TYPE,
+                    c.ordinal_position AS ORDINAL_POSITION
+                FROM information_schema.tables t
+                JOIN information_schema.columns c
+                    ON c.table_name = t.table_name
+                    AND c.table_schema = t.table_schema
+                WHERE t.table_type = 'BASE TABLE'
+                  AND t.table_schema NOT IN ('pg_catalog', 'information_schema')
+                ORDER BY t.table_schema, t.table_name, c.ordinal_position
+                """
+            )
+        else:  # mysql
+            sql = text(
+                """
+                SELECT
+                    t.TABLE_SCHEMA AS TABLE_SCHEMA,
+                    t.TABLE_NAME   AS TABLE_NAME,
+                    c.COLUMN_NAME  AS COLUMN_NAME,
+                    c.DATA_TYPE    AS DATA_TYPE,
+                    c.ORDINAL_POSITION AS ORDINAL_POSITION
                 FROM INFORMATION_SCHEMA.TABLES t
                 JOIN INFORMATION_SCHEMA.COLUMNS c
                     ON c.TABLE_NAME = t.TABLE_NAME
@@ -425,14 +521,16 @@ def get_schema_catalog() -> str:
 
         lines: list[str] = []
         current_table: str | None = None
-        for table_schema, table_name, col_name, data_type in rows:
+        for table_schema, table_name, col_name, data_type, _pos in rows:
             if table_name and table_name.lower() in ignore_tables:
                 continue
             if col_name and col_name.lower() in ignore_cols:
                 continue
 
-            full_table = f"{table_schema}.{table_name}" if dialect == "mssql" else (
-                table_name if table_schema in ("public", "", None) else f"{table_schema}.{table_name}"
+            full_table = (
+                f"{table_schema}.{table_name}"
+                if dialect == "mssql"
+                else (table_name if table_schema in ("public", "", None) else f"{table_schema}.{table_name}")
             )
 
             if full_table != current_table:
@@ -442,6 +540,11 @@ def get_schema_catalog() -> str:
                 current_table = full_table
 
             lines.append(f'  - "{col_name}" ({data_type})')
+
+        fk_text = get_foreign_keys_catalog()
+        if fk_text:
+            lines.append("")
+            lines.append(fk_text)
 
         return "\n".join(lines).strip()
 
@@ -457,11 +560,15 @@ def get_schema_catalog() -> str:
                 continue
             lines.append(f'  - "{col["name"]}" ({col["type"]})')
         lines.append("")
+
+    # (SQLite FK introspection via SQLAlchemy is inconsistent; skip by default)
     return "\n".join(lines).strip()
 
 
 def get_schema_for_tables(table_names: list[str]) -> str:
-    """Return schema text for only the requested tables (all columns).
+    """
+    Return schema text for only the requested tables (ALL columns),
+    plus FK hints filtered to those tables if possible.
 
     table_names may include schema-qualified values (schema.table).
     """
@@ -469,9 +576,10 @@ def get_schema_for_tables(table_names: list[str]) -> str:
     if not table_names:
         return get_schema_summary()
 
+    # Normalize requested tables
     wanted: list[tuple[str | None, str]] = []
     for t in table_names:
-        t = (t or "").strip().strip('"')
+        t = (t or "").strip().strip('"').strip("'")
         if not t:
             continue
         if "." in t:
@@ -500,7 +608,8 @@ def get_schema_for_tables(table_names: list[str]) -> str:
                     t.TABLE_SCHEMA,
                     t.TABLE_NAME,
                     c.COLUMN_NAME,
-                    c.DATA_TYPE
+                    c.DATA_TYPE,
+                    c.ORDINAL_POSITION
                 FROM INFORMATION_SCHEMA.TABLES t
                 JOIN INFORMATION_SCHEMA.COLUMNS c
                     ON c.TABLE_NAME = t.TABLE_NAME
@@ -510,6 +619,7 @@ def get_schema_for_tables(table_names: list[str]) -> str:
                 ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION
                 """
             )
+
         elif dialect == "postgresql":
             for i, (sch, tbl) in enumerate(wanted):
                 sch = sch or "public"
@@ -521,9 +631,10 @@ def get_schema_for_tables(table_names: list[str]) -> str:
                 f"""
                 SELECT
                     t.table_schema AS TABLE_SCHEMA,
-                    t.table_name AS TABLE_NAME,
-                    c.column_name AS COLUMN_NAME,
-                    c.data_type AS DATA_TYPE
+                    t.table_name   AS TABLE_NAME,
+                    c.column_name  AS COLUMN_NAME,
+                    c.data_type    AS DATA_TYPE,
+                    c.ordinal_position AS ORDINAL_POSITION
                 FROM information_schema.tables t
                 JOIN information_schema.columns c
                     ON c.table_name = t.table_name
@@ -533,6 +644,7 @@ def get_schema_for_tables(table_names: list[str]) -> str:
                 ORDER BY t.table_schema, t.table_name, c.ordinal_position
                 """
             )
+
         else:  # mysql
             for i, (_sch, tbl) in enumerate(wanted):
                 conds.append(f"(t.TABLE_SCHEMA = DATABASE() AND t.TABLE_NAME = :tbl{i})")
@@ -542,9 +654,10 @@ def get_schema_for_tables(table_names: list[str]) -> str:
                 f"""
                 SELECT
                     t.TABLE_SCHEMA AS TABLE_SCHEMA,
-                    t.TABLE_NAME AS TABLE_NAME,
-                    c.COLUMN_NAME AS COLUMN_NAME,
-                    c.DATA_TYPE AS DATA_TYPE
+                    t.TABLE_NAME   AS TABLE_NAME,
+                    c.COLUMN_NAME  AS COLUMN_NAME,
+                    c.DATA_TYPE    AS DATA_TYPE,
+                    c.ORDINAL_POSITION AS ORDINAL_POSITION
                 FROM INFORMATION_SCHEMA.TABLES t
                 JOIN INFORMATION_SCHEMA.COLUMNS c
                     ON c.TABLE_NAME = t.TABLE_NAME
@@ -560,22 +673,43 @@ def get_schema_for_tables(table_names: list[str]) -> str:
 
         lines: list[str] = []
         current: str | None = None
-        for table_schema, table_name, col_name, data_type in rows:
+        kept_tables: set[str] = set()
+
+        for table_schema, table_name, col_name, data_type, _pos in rows:
             if table_name and table_name.lower() in ignore_tables:
                 continue
             if col_name and col_name.lower() in ignore_cols:
                 continue
 
-            full = f"{table_schema}.{table_name}" if dialect == "mssql" else (
-                table_name if table_schema in ("public", "", None) else f"{table_schema}.{table_name}"
+            full = (
+                f"{table_schema}.{table_name}"
+                if dialect == "mssql"
+                else (table_name if table_schema in ("public", "", None) else f"{table_schema}.{table_name}")
             )
+
             if full != current:
                 if current is not None:
                     lines.append("")
                 lines.append(f'Table: "{full}"')
                 current = full
+                kept_tables.add(full)
 
             lines.append(f'  - "{col_name}" ({data_type})')
+
+        # Add FK hints (filtered best-effort by table name substring)
+        fk_text = get_foreign_keys_catalog()
+        if fk_text and kept_tables:
+            fk_lines = [ln for ln in fk_text.splitlines() if ln.strip()]
+            filtered = ["Foreign Keys:"]
+            for ln in fk_lines:
+                if not ln.startswith("  FK:"):
+                    continue
+                # include if either side table appears in kept_tables
+                if any(tbl in ln for tbl in kept_tables) or any(tbl.split(".")[-1] in ln for tbl in kept_tables):
+                    filtered.append(ln)
+            if len(filtered) > 1:
+                lines.append("")
+                lines.extend(filtered)
 
         return "\n".join(lines).strip() or get_schema_summary()
 
