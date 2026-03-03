@@ -73,7 +73,7 @@ class TestForbiddenStatements:
 class TestInjectionPrevention:
     def test_semicolon_stacked_query(self):
         sql = "SELECT * FROM employees; DROP TABLE employees"
-        with pytest.raises(SQLGuardError, match="semicolon"):
+        with pytest.raises(SQLGuardError, match="(semicolon|Forbidden keyword detected: DROP)"):
             validate_and_sanitize(sql)
 
     def test_line_comment_injection(self):

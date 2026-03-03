@@ -73,14 +73,17 @@ def execute_query(
     """
     import platform
     import signal
-    from contextlib import contextmanager
+    import threading
+    from contextlib import contextmanager, nullcontext
 
-    # Use platform-specific timeout handling
-    if platform.system() != 'Windows':
+    # Use platform/thread-safe timeout handling:
+    # signal.alarm only works in the main thread on Unix-like systems.
+    if platform.system() != 'Windows' and threading.current_thread() is threading.main_thread():
         @contextmanager
         def timeout_handler(seconds: int):
             def handler(signum, frame):
                 raise TimeoutError(f"Query execution timed out after {seconds} seconds")
+
             old_handler = signal.signal(signal.SIGALRM, handler)
             signal.alarm(seconds)
             try:
@@ -88,10 +91,10 @@ def execute_query(
             finally:
                 signal.alarm(0)
                 signal.signal(signal.SIGALRM, old_handler)
+
         timeout_ctx = timeout_handler(timeout_seconds)
     else:
-        # On Windows, just use a no-op context manager (timeout handled by DB-level settings)
-        from contextlib import nullcontext
+        # Fallback no-op timeout context for unsupported environments
         timeout_ctx = nullcontext()
 
     try:

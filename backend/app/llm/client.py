@@ -28,7 +28,7 @@ class LLMClient:
                     "num_predict": 100
                 }
             },
-            timeout=300,
+            timeout=self.settings.LLM_TIMEOUT_SECONDS,
         )
         r.raise_for_status()
         return r.json().get("response", "").strip()
