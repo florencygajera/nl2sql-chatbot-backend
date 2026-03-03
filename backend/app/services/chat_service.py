@@ -5,6 +5,8 @@ Upgrades in this version
 ------------------------
 ✅ Robust table-picking even if catalog format changes
 ✅ Clarification gate (stops guessing when the question is ambiguous)
+✅ Pre-execution SQL sanity checks (missing FROM / alias not bound)
+✅ Pre-execution column existence validation (blocks hallucinated columns)
 ✅ Auto-repair loop on SQL execution errors (invalid column/table/join)
 ✅ Better user-facing error guidance
 
@@ -14,11 +16,12 @@ Flow
 2. Fetch DB schema catalog/summary.
 3. Select relevant tables (robust parsing + fallback).
 4. Generate SQL via local LLM (dialect-aware).
-5. Validate SQL (security + basic sanity).
+5. Validate SQL (security + basic sanity + column existence).
 6. Execute query (unless QUERY_ONLY).
 7. If execution fails → repair SQL (1–2 tries).
 8. Return response.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,7 +40,6 @@ from app.db.session import (
 )
 from app.db.schema_retriever import parse_schema_summary, select_relevant_tables
 from app.core.config import get_settings
-
 from app.llm.nl2sql import generate_sql
 from app.security.sql_guard import SQLGuardError, validate_and_sanitize
 from app.services.query_executor import QueryExecutionError, QueryResult, execute_query
@@ -45,11 +47,7 @@ from app.services.query_executor import QueryExecutionError, QueryResult, execut
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-top_k = settings.NL2SQL_TOP_TABLES
-
 # ── SQL identifier checks (pre-execution) ─────────────────────────────────────
-
-_IDENT = re.compile(r"\b([A-Za-z_][\w]*)\b")
 
 def _parse_schema_to_map(schema_text: str) -> dict[str, set[str]]:
     """
@@ -69,20 +67,28 @@ def _parse_schema_to_map(schema_text: str) -> dict[str, set[str]]:
             current = s.split("Table:", 1)[1].strip().strip('"').strip("'")
             table_map[current] = set()
             continue
-        if current and s.startswith("-"):
-            # sometimes schema has "- Column"
-            col = s[1:].strip().strip('"').split('"')[0] if '"' in s else s.split()[0]
-            if col:
-                table_map[current].add(col)
+
         if current and s.startswith("  -"):
             raw = s[3:].strip()
             if raw.startswith('"'):
                 pieces = raw.split('"')
-                col = pieces[1] if len(pieces) >= 2 else raw
+                col = pieces[1] if len(pieces) >= 2 else ""
             else:
-                col = raw.split(" ", 1)[0]
+                col = raw.split(" ", 1)[0].strip()
             if col:
                 table_map[current].add(col)
+
+        elif current and s.startswith("-"):
+            # sometimes schema has "- Column"
+            raw = s[1:].strip()
+            if raw.startswith('"'):
+                pieces = raw.split('"')
+                col = pieces[1] if len(pieces) >= 2 else ""
+            else:
+                col = raw.split(" ", 1)[0].strip()
+            if col:
+                table_map[current].add(col)
+
     return table_map
 
 
@@ -98,11 +104,9 @@ def _extract_tables_from_sql(sql: str) -> list[str]:
     s = sql or ""
     tables: list[str] = []
 
-    # [dbo].[Table]
     for m in re.finditer(r"\b(?:from|join)\s+\[([^\]]+)\]\.\[([^\]]+)\]", s, flags=re.I):
         tables.append(f"{m.group(1)}.{m.group(2)}")
 
-    # dbo.Table
     for m in re.finditer(r"\b(?:from|join)\s+([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)\b", s, flags=re.I):
         tables.append(f"{m.group(1)}.{m.group(2)}")
 
@@ -123,7 +127,7 @@ def _extract_column_refs(sql: str) -> set[str]:
     Captures:
       - alias.column
       - [alias].[column]
-      - [column]  (ONLY in contexts where it likely represents a column)
+      - [column] (ONLY in contexts where likely a column)
     Avoids:
       - [schema].[table]
       - table names after FROM/JOIN
@@ -140,8 +144,7 @@ def _extract_column_refs(sql: str) -> set[str]:
     for m in re.finditer(r"\[[^\]]+\]\.\[([^\]]+)\]", s):
         cols.add(m.group(1))
 
-    # 3) [column] ONLY when used in SELECT/WHERE/ON/GROUP BY/ORDER BY
-    # This avoids capturing [dbo] and [Receipt_Master] from [dbo].[Receipt_Master]
+    # 3) [column] only in SELECT/WHERE/ON/GROUP/ORDER contexts
     context_patterns = [
         r"\bselect\b[^;]*?\[([^\]]+)\]",
         r"\bwhere\b[^;]*?\[([^\]]+)\]",
@@ -153,32 +156,30 @@ def _extract_column_refs(sql: str) -> set[str]:
         for m in re.finditer(pat, s, flags=re.I | re.S):
             cols.add(m.group(1))
 
-    # remove obvious SQL keywords + schema/table-ish tokens
     keywords = {
-        "select","from","where","join","on","and","or","group","by","order","as","inner","left","right",
-        "count","sum","avg","min","max","distinct","top","limit","offset","fetch","dbo"
+        "select", "from", "where", "join", "on", "and", "or", "group", "by", "order", "as",
+        "inner", "left", "right", "count", "sum", "avg", "min", "max", "distinct",
+        "top", "limit", "offset", "fetch", "dbo"
     }
     cols = {c for c in cols if c and c.lower() not in keywords}
 
-    # If the model accidentally outputs schema/table as [dbo].[Receipt_Master],
-    # we will have captured 'Receipt_Master' via pattern (2). Remove table tokens:
-    # Heuristic: anything that appears right after FROM/JOIN is a table, not a column.
+    # Remove table/schema tokens that appear after FROM/JOIN
     table_tokens = set()
     for m in re.finditer(r"\b(?:from|join)\s+\[([^\]]+)\]\.\[([^\]]+)\]", s, flags=re.I):
-        table_tokens.add(m.group(2))
         table_tokens.add(m.group(1))
+        table_tokens.add(m.group(2))
     for m in re.finditer(r"\b(?:from|join)\s+([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)\b", s, flags=re.I):
-        table_tokens.add(m.group(2))
         table_tokens.add(m.group(1))
-    cols = {c for c in cols if c not in table_tokens}
+        table_tokens.add(m.group(2))
 
+    cols = {c for c in cols if c not in table_tokens}
     return cols
 
 
 def _validate_columns_exist(sql: str, schema_text: str) -> tuple[bool, str]:
     """
     Ensure every referenced column exists in at least one selected table.
-    This blocks hallucinated columns (like RojmelTypeId) before execution.
+    This blocks hallucinated columns before execution.
     """
     table_map = _parse_schema_to_map(schema_text)
     if not table_map:
@@ -188,47 +189,59 @@ def _validate_columns_exist(sql: str, schema_text: str) -> tuple[bool, str]:
     if not referenced_cols:
         return True, ""
 
-
     all_cols = set().union(*table_map.values()) if table_map else set()
     missing = [c for c in referenced_cols if c not in all_cols]
 
     if missing:
         return False, f"SQL referenced unknown column(s): {', '.join(missing)}"
+    return True, ""
+
+
+def _basic_sql_sanity(sql: str) -> tuple[bool, str]:
+    """
+    Block obviously broken SQL before execution.
+    - Must be SELECT
+    - Must contain FROM (unless it's CLARIFY helper select)
+    - If references alias T1., must define AS T1 somewhere
+    """
+    s = (sql or "").strip()
+    if not s:
+        return False, "Empty SQL."
+    low = s.lower()
+
+    if not low.startswith("select"):
+        return False, "Only SELECT queries are allowed."
+
+    # Allow CLARIFY helper selects without FROM
+    if "clarify:" in low:
+        return True, ""
+
+    if " from " not in f" {low} ":
+        return False, "Missing FROM clause."
+
+    if re.search(r"\bT1\.", s) and not re.search(r"\bas\s+T1\b", s, flags=re.I):
+        return False, "Uses alias T1 but FROM/JOIN does not define AS T1."
 
     return True, ""
 
 
 # ── Response builders ─────────────────────────────────────────────────────────
 
-def _build_db_response(
-    mode: str,
-    sql: str,
-    explanation: str,
-    result: QueryResult | None,
-) -> dict[str, Any]:
-    response: dict[str, Any] = {
-        "type": "DB",
-        "mode": mode,
-        "explanation": explanation,
-    }
+def _build_db_response(mode: str, sql: str, explanation: str, result: QueryResult | None) -> dict[str, Any]:
+    response: dict[str, Any] = {"type": "DB", "mode": mode, "explanation": explanation}
 
     if mode in ("QUERY_ONLY", "QUERY_AND_ANSWER"):
         response["sql"] = sql
         response["params"] = {}
 
     if mode in ("ANSWER_ONLY", "QUERY_AND_ANSWER") and result is not None:
-        response["result"] = {
-            "columns": result.columns,
-            "rows": result.rows,
-            "row_count": result.row_count,
-        }
+        response["result"] = {"columns": result.columns, "rows": result.rows, "row_count": result.row_count}
         response["answer_text"] = _generate_answer_text(result, explanation)
 
     return response
 
 
 def _generate_answer_text(result: QueryResult, explanation: str) -> str:
-    """Produce a brief human-readable summary of the query result."""
     if result.row_count == 0:
         return "The query returned no results."
 
@@ -237,56 +250,21 @@ def _generate_answer_text(result: QueryResult, explanation: str) -> str:
         col = result.columns[0]
         return f"{explanation} Result: {col} = {val}"
 
-    summary_parts = [
-        f"Found {result.row_count} row(s).",
-        f"Columns: {', '.join(result.columns)}.",
-    ]
+    summary_parts = [f"Found {result.row_count} row(s).", f"Columns: {', '.join(result.columns)}."]
+
     if result.row_count <= 5:
         for row in result.rows:
-            summary_parts.append(
-                "  • " + ", ".join(f"{c}: {v}" for c, v in zip(result.columns, row))
-            )
+            summary_parts.append("  • " + ", ".join(f"{c}: {v}" for c, v in zip(result.columns, row)))
     else:
         summary_parts.append("First 3 rows:")
         for row in result.rows[:3]:
-            summary_parts.append(
-                "  • " + ", ".join(f"{c}: {v}" for c, v in zip(result.columns, row))
-            )
+            summary_parts.append("  • " + ", ".join(f"{c}: {v}" for c, v in zip(result.columns, row)))
         summary_parts.append(f"  … and {result.row_count - 3} more.")
 
     return "\n".join(summary_parts)
 
 
-# ── Schema helpers ────────────────────────────────────────────────────────────
-
-def _extract_table_names_from_schema(schema_text: str, max_items: int = 12) -> list[str]:
-    """
-    Extract table names from schema text using multiple patterns.
-    Works for formats like:
-      - Table: dbo.TableName
-      - Table: "dbo.TableName"
-      - dbo.TableName(...)
-    """
-    found: list[str] = []
-
-    # Pattern A: lines like `Table: ...`
-    for line in schema_text.splitlines():
-        if not line.strip().lower().startswith("table:"):
-            continue
-        raw = line.split(":", 1)[1].strip().strip('"').strip("'")
-        if raw:
-            found.append(raw)
-        if len(found) >= max_items:
-            return _dedupe_preserve_order(found)
-
-    # Pattern B: `dbo.X` occurrences
-    for m in re.finditer(r"\b([A-Za-z_][\w]*\.[A-Za-z_][\w]*)\b", schema_text):
-        found.append(m.group(1))
-        if len(found) >= max_items:
-            break
-
-    return _dedupe_preserve_order(found)[:max_items]
-
+# ── Schema helpers ───────────────────────────────────────────────────────────
 
 def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
     seen = set()
@@ -298,12 +276,27 @@ def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
     return out
 
 
+def _extract_table_names_from_schema(schema_text: str, max_items: int = 12) -> list[str]:
+    found: list[str] = []
+
+    for line in schema_text.splitlines():
+        if not line.strip().lower().startswith("table:"):
+            continue
+        raw = line.split(":", 1)[1].strip().strip('"').strip("'")
+        if raw:
+            found.append(raw)
+        if len(found) >= max_items:
+            return _dedupe_preserve_order(found)
+
+    for m in re.finditer(r"\b([A-Za-z_][\w]*\.[A-Za-z_][\w]*)\b", schema_text):
+        found.append(m.group(1))
+        if len(found) >= max_items:
+            break
+
+    return _dedupe_preserve_order(found)[:max_items]
+
+
 def _get_tables_for_question(catalog_text: str, question: str, top_k: int) -> list[str]:
-    """
-    Robust table selection:
-    - Try your existing parser (best when format is correct)
-    - If parsing fails / empty, fallback to regex table extraction + keyword scoring
-    """
     picked: list[str] = []
 
     try:
@@ -315,7 +308,6 @@ def _get_tables_for_question(catalog_text: str, question: str, top_k: int) -> li
     except Exception as exc:
         logger.warning("parse_schema_summary/select_relevant_tables failed: %s", exc)
 
-    # Fallback: extract table names from text, score by keyword overlap
     all_tables = _extract_table_names_from_schema(catalog_text, max_items=200)
     if not all_tables:
         return []
@@ -330,7 +322,6 @@ def _get_tables_for_question(catalog_text: str, question: str, top_k: int) -> li
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     top = [t for _, t in scored[:top_k]]
 
-    # If everything scored 0, still return something (top_k) to avoid empty schema
     if all(s == 0 for s, _ in scored[: min(len(scored), top_k)]):
         return all_tables[:top_k]
 
@@ -340,7 +331,6 @@ def _get_tables_for_question(catalog_text: str, question: str, top_k: int) -> li
 # ── Error helpers ─────────────────────────────────────────────────────────────
 
 def _build_query_error_answer(exc: Exception, schema: str) -> str:
-    """Return concise, user-friendly guidance for common SQL execution errors."""
     err = str(exc)
 
     invalid_object = re.search(r"Invalid object name '([^']+)'", err, re.IGNORECASE)
@@ -371,17 +361,15 @@ def _build_query_error_answer(exc: Exception, schema: str) -> str:
 
 
 def _detect_response_mode(user_message: str) -> str:
-    """Detect what kind of response the user expects."""
     lower = user_message.lower()
 
     query_keywords = [
-        "sql", "query", "command only", "just the query",
-        "show me the query", "give me the sql", "only the sql",
-        "only sql", "sql only", "raw query",
+        "sql", "query", "command only", "just the query", "show me the query",
+        "give me the sql", "only the sql", "only sql", "sql only", "raw query",
     ]
     answer_keywords = [
-        "only answer", "just the answer", "only the answer",
-        "just answer", "answer only", "no sql", "without sql",
+        "only answer", "just the answer", "only the answer", "just answer",
+        "answer only", "no sql", "without sql",
     ]
 
     if any(kw in lower for kw in query_keywords):
@@ -392,21 +380,14 @@ def _detect_response_mode(user_message: str) -> str:
 
 
 def _needs_clarification(question: str) -> str | None:
-    """
-    Lightweight clarification gate.
-    Returns a clarifying question string if the user request is too ambiguous.
-    """
     q = question.lower().strip()
 
-    # If user is explicitly asking for SQL/query, don't block them
     if any(k in q for k in ("sql", "query", "only sql", "raw query")):
         return None
 
-    # Very common ambiguous intents
     ambiguous_words = ("report", "details", "data", "list", "show", "history", "summary", "statement")
     has_ambiguous = any(w in q for w in ambiguous_words)
 
-    # If they didn't specify any time period and asked for report/history/list → ask timeframe
     has_time_hint = any(
         t in q for t in (
             "today", "yesterday", "tomorrow", "this week", "last week",
@@ -422,56 +403,20 @@ def _needs_clarification(question: str) -> str | None:
     return None
 
 
-async def _repair_sql(
-    *,
-    question: str,
-    previous_sql: str,
-    error_text: str,
-    schema: str,
-    dialect: str,
-) -> str:
-    """
-    Ask the LLM to repair SQL using the DB error + schema.
-    Works with your existing `generate_sql()` without changing other files.
-    """
-    repair_prompt = (
-        "You generated SQL that failed to execute.\n\n"
-        f"USER QUESTION:\n{question}\n\n"
-        f"FAILED SQL:\n{previous_sql}\n\n"
-        f"DB ERROR:\n{error_text}\n\n"
-        "TASK:\n"
-        "- Return ONLY corrected SQL.\n"
-        "- Use ONLY tables/columns from the provided schema.\n"
-        "- Prefer simple joins on obvious key columns (Id, ...Id).\n"
-        "- If a referenced column doesn't exist, choose the closest existing column name.\n\n"
-        f"SCHEMA:\n{schema}\n"
-    )
-    return await generate_sql(repair_prompt, schema_hint=schema, dialect=dialect)
-
-
 # ── Main service function ─────────────────────────────────────────────────────
 
 async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dict[str, Any]:
-    """
-    Process a user message end-to-end and return a JSON-serialisable response.
-    """
-    # ── Step 0: Detect current DB dialect ─────────────────────────────────────
     dialect = get_current_dialect()
     logger.info("Current DB dialect: %s", dialect)
 
-    # ── Step 1: Detect desired response mode ──────────────────────────────────
     mode = _detect_response_mode(message)
     logger.info("User message: %r | Mode: %s", message, mode)
 
-    # ── Step 1.5: Clarification gate (prevents guessing) ──────────────────────
     clarify = _needs_clarification(message)
     if clarify:
-        return {
-            "type": "CHAT",
-            "answer": clarify,
-        }
+        return {"type": "CHAT", "answer": clarify}
 
-    # ── Step 2: Fetch DB catalog/summary ──────────────────────────────────────
+    # ── Fetch catalog/summary ────────────────────────────────────────────────
     catalog = (cached_schema or "").strip()
 
     if not catalog:
@@ -481,7 +426,6 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
             logger.warning("Could not fetch schema catalog: %s", exc)
             catalog = ""
 
-    # Fall back to old summary (may be truncated but better than empty)
     if not catalog:
         try:
             catalog = (await run_in_threadpool(get_schema_summary)).strip()
@@ -499,9 +443,8 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
             ),
         }
 
-    # ── Step 2.5: Select relevant tables & fetch targeted schema ──────────────
-    settings = get_settings()
-    top_k = settings.NL2SQL_TOP_TABLES
+    # ── Select tables + targeted schema ──────────────────────────────────────
+    top_k = int(getattr(settings, "NL2SQL_TOP_TABLES", 10))
     picked_tables = _get_tables_for_question(catalog, message, top_k=top_k)
 
     schema = ""
@@ -512,7 +455,6 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
             logger.warning("Could not fetch targeted schema: %s", exc)
             schema = ""
 
-    # If targeted schema failed, fall back to catalog itself
     if not (schema or "").strip():
         schema = catalog
 
@@ -523,51 +465,31 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
         picked_tables[: min(12, len(picked_tables))],
     )
 
-    # ── Step 3: Call LLM to generate SQL ──────────────────────────────────────
+    # ── Generate SQL ─────────────────────────────────────────────────────────
     try:
         raw_sql = await generate_sql(message, schema_hint=schema, dialect=dialect)
     except asyncio.TimeoutError:
-        logger.error("LLM timeout: The AI model took too long to respond")
+        logger.error("LLM timeout")
         return {
             "type": "CHAT",
             "answer": (
-                "The AI model took too long to respond. This usually happens when the model "
-                "is loading into memory. Please wait a moment and try again. "
-                "If the problem persists, check that Ollama is running and the model is loaded."
+                "The AI model took too long to respond. This can happen if the model is loading. "
+                "Please try again. If it persists, ensure Ollama is running and the model is loaded."
             ),
         }
     except Exception as exc:
         logger.error("LLM error: %s", exc)
-        error_msg = str(exc).lower()
-        if "timeout" in error_msg or "timed out" in error_msg:
-            return {
-                "type": "CHAT",
-                "answer": (
-                    "The AI model took too long to respond. This usually happens when the model "
-                    "is loading into memory. Please wait a moment and try again. "
-                    "If the problem persists, check that Ollama is running and the model is loaded."
-                ),
-            }
-        return {
-            "type": "CHAT",
-            "answer": (
-                "I encountered an error communicating with the AI model. "
-                f"Details: {exc}"
-            ),
-        }
+        return {"type": "CHAT", "answer": f"I encountered an error communicating with the AI model. Details: {exc}"}
 
     if not raw_sql or not raw_sql.strip():
-        return {
-            "type": "CHAT",
-            "answer": "I wasn't able to generate a SQL query for that question. Could you rephrase?",
-        }
+        return {"type": "CHAT", "answer": "I wasn't able to generate a SQL query for that question. Could you rephrase?"}
 
     if "Please specify which SQL dialect" in raw_sql:
         return {"type": "CHAT", "answer": raw_sql}
 
     explanation = f"Generated SQL for: {message}"
 
-    # ── Step 4: Validate SQL (dialect-aware) ──────────────────────────────────
+    # ── Security validation ──────────────────────────────────────────────────
     try:
         validation = validate_and_sanitize(raw_sql, dialect=dialect)
         safe_sql = validation.sanitized_sql
@@ -575,14 +497,23 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
         logger.warning("SQL guard rejected query: %s | SQL: %s", exc, raw_sql)
         return {
             "type": "CHAT",
-            "answer": (
-                f"The generated SQL did not pass security validation: {exc}. "
-                "Please rephrase your question."
-            ),
+            "answer": f"The generated SQL did not pass security validation: {exc}. Please rephrase your question.",
         }
 
-    # ── Step 5: Execute (unless QUERY_ONLY) with repair loop ──────────────────
-        # ── Step 5: Execute (unless QUERY_ONLY) with strong repair loop ────────────
+    # ── CLARIFY handling ─────────────────────────────────────────────────────
+    if "CLARIFY:" in safe_sql.upper():
+        return {"type": "CHAT", "answer": safe_sql}
+
+    # ── Basic sanity checks BEFORE execution ─────────────────────────────────
+    ok, reason = _basic_sql_sanity(safe_sql)
+    if not ok:
+        return {
+            "type": "CHAT",
+            "answer": f"I blocked invalid SQL generated by the model: {reason}",
+            "sql": safe_sql,
+        }
+
+    # ── Execute (unless QUERY_ONLY) with repair loop ─────────────────────────
     result: QueryResult | None = None
 
     if mode != "QUERY_ONLY":
@@ -590,12 +521,11 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
         attempt = 0
 
         while attempt <= max_retries:
-            # 5.0 Pre-execution: validate columns exist in schema subset
-            ok, reason = _validate_columns_exist(safe_sql, schema)
-            if not ok:
-                logger.error("Blocked invalid SQL before execution: %s | SQL: %s", reason, safe_sql)
+            # Validate columns exist in current schema subset
+            ok_cols, reason_cols = _validate_columns_exist(safe_sql, schema)
+            if not ok_cols:
+                logger.error("Blocked invalid SQL before execution: %s | SQL: %s", reason_cols, safe_sql)
 
-                # Re-fetch schema strictly for tables referenced in SQL (to repair better)
                 referenced_tables = _extract_tables_from_sql(safe_sql)
                 if referenced_tables:
                     try:
@@ -610,14 +540,13 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
                         "sql": safe_sql,
                         "params": {},
                         "explanation": explanation,
-                        "error": reason,
+                        "error": reason_cols,
                         "answer_text": (
-                            f"I blocked the generated SQL because it used column(s) that don't exist: {reason}. "
-                            "Please specify the correct column or ask: 'show me columns of <table>'."
+                            f"I blocked the generated SQL because it used column(s) that don't exist: {reason_cols}. "
+                            "Ask: 'show me columns of <table>' to confirm exact names."
                         ),
                     }
 
-                # Repair: force model to ONLY use existing columns or CLARIFY
                 repair_prompt = (
                     "Fix this SQL Server query. Return ONLY corrected SQL.\n"
                     "HARD RULES:\n"
@@ -627,7 +556,7 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
                     "  SELECT N'CLARIFY: Which column should be used to join these tables?' AS [NeedMoreInfo];\n\n"
                     f"USER QUESTION:\n{message}\n\n"
                     f"FAILED SQL:\n{safe_sql}\n\n"
-                    f"VALIDATION ERROR:\n{reason}\n\n"
+                    f"VALIDATION ERROR:\n{reason_cols}\n\n"
                     f"SCHEMA:\n{schema}\n"
                 )
 
@@ -635,17 +564,31 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
                 validation2 = validate_and_sanitize(repaired, dialect=dialect)
                 safe_sql = validation2.sanitized_sql
                 explanation = f"Repaired SQL for: {message}"
+
+                # If repair results in CLARIFY, stop.
+                if "CLARIFY:" in safe_sql.upper():
+                    return {"type": "CHAT", "answer": safe_sql}
+
+                # sanity again
+                ok2, reason2 = _basic_sql_sanity(safe_sql)
+                if not ok2:
+                    return {"type": "CHAT", "answer": f"I blocked invalid repaired SQL: {reason2}", "sql": safe_sql}
+
                 attempt += 1
                 continue
 
-            # 5.1 Execute
             try:
                 result = await run_in_threadpool(execute_query, db, safe_sql, {}, dialect)
                 break
             except QueryExecutionError as exc:
-                logger.error("Query execution failed (attempt %d/%d): %s | SQL: %s", attempt + 1, max_retries + 1, exc, safe_sql)
+                logger.error(
+                    "Query execution failed (attempt %d/%d): %s | SQL: %s",
+                    attempt + 1,
+                    max_retries + 1,
+                    exc,
+                    safe_sql,
+                )
 
-                # Refetch schema for referenced tables (helps repair)
                 referenced_tables = _extract_tables_from_sql(safe_sql)
                 if referenced_tables:
                     try:
@@ -664,7 +607,6 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
                         "answer_text": _build_query_error_answer(exc, schema),
                     }
 
-                # Repair using DB error + schema
                 repair_prompt = (
                     "Fix this SQL Server query. Return ONLY corrected SQL.\n"
                     "HARD RULES:\n"
@@ -682,35 +624,15 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
                 validation2 = validate_and_sanitize(repaired, dialect=dialect)
                 safe_sql = validation2.sanitized_sql
                 explanation = f"Repaired SQL for: {message}"
+
+                if "CLARIFY:" in safe_sql.upper():
+                    return {"type": "CHAT", "answer": safe_sql}
+
+                ok2, reason2 = _basic_sql_sanity(safe_sql)
+                if not ok2:
+                    return {"type": "CHAT", "answer": f"I blocked invalid repaired SQL: {reason2}", "sql": safe_sql}
+
                 attempt += 1
-                
-    # ── Step 6: Build final response ──────────────────────────────────────────
-    return _build_db_response(
-        mode=mode,
-        sql=safe_sql,
-        explanation=explanation,
-        result=result,
-    )
 
-    def _basic_sql_sanity(sql: str) -> tuple[bool, str]:
-        s = (sql or "").strip().lower()
-        if not s.startswith("select"):
-            return False, "Only SELECT queries are allowed."
-        if " from " not in f" {s} ":
-            return False, "Missing FROM clause."
-        # If uses alias T1., ensure " AS T1" exists
-        if re.search(r"\bT1\.", sql) and not re.search(r"\bas\s+T1\b", sql, flags=re.I):
-            return False, "Uses alias T1 but FROM/JOIN does not define AS T1."
-        return True, ""
-
-    # after safe_sql computed:
-    ok, reason = _basic_sql_sanity(safe_sql)
-    if not ok:
-        return {
-            "type": "CHAT",
-            "answer": f"I blocked invalid SQL generated by the model: {reason}. Try rephrasing or ask for schema/tables.",
-            "sql": safe_sql,
-        }
-
-    if "CLARIFY:" in safe_sql.upper():
-        return {"type": "CHAT", "answer": safe_sql}
+    # ── Build final response ─────────────────────────────────────────────────
+    return _build_db_response(mode=mode, sql=safe_sql, explanation=explanation, result=result)
