@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     ENABLE_PERFORMANCE_MONITORING: bool = True
     # ── LLM generation tuning ─────────────────────────────────────────────────
     LLM_NUM_CTX: int = 8192
-    LLM_MAX_TOKENS: int = 512
+    LLM_MAX_TOKENS: int = 256
 
     # ── NL→SQL accuracy tuning ───────────────────────────────────────────────
     NL2SQL_TOP_TABLES: int = 10

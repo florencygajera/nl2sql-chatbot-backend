@@ -162,7 +162,7 @@ class AsyncOllamaClient:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
-                "keep_alive": "5m",
+                "keep_alive": "30m",
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens,
