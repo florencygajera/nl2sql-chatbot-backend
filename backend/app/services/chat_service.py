@@ -118,33 +118,60 @@ def _extract_tables_from_sql(sql: str) -> list[str]:
 
 def _extract_column_refs(sql: str) -> set[str]:
     """
-    Very lightweight extraction of column names used in SQL.
+    Extract column names referenced in SQL, without incorrectly capturing table names.
+
     Captures:
-      alias.col
-      [alias].[col]
-      [col]
+      - alias.column
+      - [alias].[column]
+      - [column]  (ONLY in contexts where it likely represents a column)
+    Avoids:
+      - [schema].[table]
+      - table names after FROM/JOIN
+      - schema names like dbo
     """
     s = sql or ""
     cols: set[str] = set()
 
-    # alias.col
+    # 1) alias.column
     for m in re.finditer(r"\b[A-Za-z_][\w]*\.([A-Za-z_][\w]*)\b", s):
         cols.add(m.group(1))
 
-    # [alias].[col]
+    # 2) [alias].[column]
     for m in re.finditer(r"\[[^\]]+\]\.\[([^\]]+)\]", s):
         cols.add(m.group(1))
 
-    # [col]
-    for m in re.finditer(r"\[([^\]]+)\]", s):
-        cols.add(m.group(1))
+    # 3) [column] ONLY when used in SELECT/WHERE/ON/GROUP BY/ORDER BY
+    # This avoids capturing [dbo] and [Receipt_Master] from [dbo].[Receipt_Master]
+    context_patterns = [
+        r"\bselect\b[^;]*?\[([^\]]+)\]",
+        r"\bwhere\b[^;]*?\[([^\]]+)\]",
+        r"\bon\b[^;]*?\[([^\]]+)\]",
+        r"\bgroup\s+by\b[^;]*?\[([^\]]+)\]",
+        r"\border\s+by\b[^;]*?\[([^\]]+)\]",
+    ]
+    for pat in context_patterns:
+        for m in re.finditer(pat, s, flags=re.I | re.S):
+            cols.add(m.group(1))
 
-    # remove obvious SQL keywords (keep small list)
+    # remove obvious SQL keywords + schema/table-ish tokens
     keywords = {
         "select","from","where","join","on","and","or","group","by","order","as","inner","left","right",
-        "count","sum","avg","min","max","distinct","top","limit","offset","fetch"
+        "count","sum","avg","min","max","distinct","top","limit","offset","fetch","dbo"
     }
     cols = {c for c in cols if c and c.lower() not in keywords}
+
+    # If the model accidentally outputs schema/table as [dbo].[Receipt_Master],
+    # we will have captured 'Receipt_Master' via pattern (2). Remove table tokens:
+    # Heuristic: anything that appears right after FROM/JOIN is a table, not a column.
+    table_tokens = set()
+    for m in re.finditer(r"\b(?:from|join)\s+\[([^\]]+)\]\.\[([^\]]+)\]", s, flags=re.I):
+        table_tokens.add(m.group(2))
+        table_tokens.add(m.group(1))
+    for m in re.finditer(r"\b(?:from|join)\s+([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)\b", s, flags=re.I):
+        table_tokens.add(m.group(2))
+        table_tokens.add(m.group(1))
+    cols = {c for c in cols if c not in table_tokens}
+
     return cols
 
 
@@ -160,6 +187,7 @@ def _validate_columns_exist(sql: str, schema_text: str) -> tuple[bool, str]:
     referenced_cols = _extract_column_refs(sql)
     if not referenced_cols:
         return True, ""
+
 
     all_cols = set().union(*table_map.values()) if table_map else set()
     missing = [c for c in referenced_cols if c not in all_cols]
@@ -686,4 +714,3 @@ async def handle_chat(message: str, db: Session, cached_schema: str = "") -> dic
 
     if "CLARIFY:" in safe_sql.upper():
         return {"type": "CHAT", "answer": safe_sql}
-        
