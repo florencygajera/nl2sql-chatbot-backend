@@ -109,6 +109,13 @@ def validate_and_sanitize(sql: str, dialect: str = "unknown") -> ValidationResul
     if _SEMICOLON_OUTSIDE_LITERAL.search(sql):
         raise SQLGuardError("Multiple SQL statements are not permitted (semicolon detected).")
 
+    # Basic syntax validation: SELECT must have FROM (unless it's a simple SELECT expression)
+    upper_sql = sql.upper()
+    if "SELECT" in upper_sql and not ("FROM " in upper_sql or "FROM\t" in upper_sql):
+        # Allow simple SELECT expressions like SELECT 1, SELECT GETDATE(), SELECT NOW()
+        # But block incomplete SELECT statements
+        raise SQLGuardError("Invalid SQL: SELECT statement is missing FROM clause.")
+
     sql = _maybe_inject_limit(sql, dialect)
 
     return ValidationResult(is_valid=True, sanitized_sql=sql)
