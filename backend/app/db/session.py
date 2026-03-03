@@ -289,6 +289,7 @@ def get_schema_summary() -> str:
             lines: list[str] = []
             current_table = None
             tables_processed = 0
+            col_count = 0
             for row in rows:
                 if dialect == "mssql":
                     table_schema, table_name, col_name, data_type = row
@@ -302,8 +303,8 @@ def get_schema_summary() -> str:
                 if col_name.lower() in ignore_cols:
                     continue
                 if full_table_name != current_table:
-                    if tables_processed >= 15:
-                        lines.append("... (schema truncated due to size limits)")
+                    if tables_processed >= 50:
+                        lines.append("... (schema truncated)")
                         break
                     
                     if current_table is not None:
@@ -311,7 +312,10 @@ def get_schema_summary() -> str:
                     lines.append(f'Table: "{full_table_name}"')
                     current_table = full_table_name
                     tables_processed += 1
-                lines.append(f'  - "{col_name}" ({data_type})')
+                    col_count = 0
+                col_count += 1
+                if col_count <= 15:
+                    lines.append(f'  - "{col_name}" ({data_type})')
             return "\n".join(lines).strip()
 
         except Exception as e:
@@ -325,15 +329,18 @@ def get_schema_summary() -> str:
     for table_name in inspector.get_table_names():
         if table_name.lower() in ignore_tables:
             continue
-        if tables_processed >= 15:
-            lines.append("... (schema truncated due to size limits)")
+        if tables_processed >= 50:
+            lines.append("... (schema truncated)")
             break
         lines.append(f'Table: "{table_name}"')
         tables_processed += 1
+        col_count = 0
         for col in inspector.get_columns(table_name):
             if col['name'].lower() in ignore_cols:
                 continue
-            lines.append(f'  - "{col["name"]}" ({col["type"]})')
+            col_count += 1
+            if col_count <= 15:
+                lines.append(f'  - "{col["name"]}" ({col["type"]})')
         lines.append("")
     return "\n".join(lines).strip()
 
