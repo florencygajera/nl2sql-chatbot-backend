@@ -242,6 +242,7 @@ def get_schema_summary() -> str:
         if dialect == "mssql":
             sql = text("""
                 SELECT
+                    t.TABLE_SCHEMA,
                     t.TABLE_NAME,
                     c.COLUMN_NAME,
                     c.DATA_TYPE
@@ -287,16 +288,23 @@ def get_schema_summary() -> str:
 
             lines: list[str] = []
             current_table = None
-            for table_name, col_name, data_type in rows:
+            for row in rows:
+                if dialect == "mssql":
+                    table_schema, table_name, col_name, data_type = row
+                    full_table_name = f'{table_schema}.{table_name}'
+                else:
+                    table_name, col_name, data_type = row
+                    full_table_name = table_name
+
                 if table_name.lower() in ignore_tables:
                     continue
                 if col_name.lower() in ignore_cols:
                     continue
-                if table_name != current_table:
+                if full_table_name != current_table:
                     if current_table is not None:
                         lines.append("")
-                    lines.append(f'Table: "{table_name}"')
-                    current_table = table_name
+                    lines.append(f'Table: "{full_table_name}"')
+                    current_table = full_table_name
                 lines.append(f'  - "{col_name}" ({data_type})')
             return "\n".join(lines).strip()
 

@@ -13,6 +13,7 @@ Flow
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -83,6 +84,43 @@ def _generate_answer_text(result: QueryResult, explanation: str) -> str:
 
     return "\n".join(summary_parts)
 
+
+
+
+def _extract_table_names_from_schema(schema_text: str, max_items: int = 8) -> list[str]:
+    """Extract table names from schema summary lines like: Table: "dbo.Users"."""
+    table_names: list[str] = []
+    for line in schema_text.splitlines():
+        if not line.startswith('Table: '):
+            continue
+        raw = line.split('Table: ', 1)[1].strip().strip('"')
+        if raw:
+            table_names.append(raw)
+        if len(table_names) >= max_items:
+            break
+    return table_names
+
+
+def _build_query_error_answer(exc: Exception, schema: str) -> str:
+    """Return concise, user-friendly guidance for common SQL execution errors."""
+    err = str(exc)
+
+    invalid_object = re.search(r"Invalid object name '([^']+)'", err, re.IGNORECASE)
+    if invalid_object:
+        bad_table = invalid_object.group(1)
+        available = _extract_table_names_from_schema(schema)
+        if available:
+            return (
+                f"Table '{bad_table}' was not found in the connected database. "
+                f"Try using one of these tables from your schema: {', '.join(available)}. "
+                "If needed, include the schema name like dbo.TableName."
+            )
+        return (
+            f"Table '{bad_table}' was not found in the connected database. "
+            "Please verify table names in your connected schema and try again."
+        )
+
+    return f"Query failed: {err}"
 
 def _detect_response_mode(user_message: str) -> str:
     """Detect what kind of response the user expects."""
@@ -183,7 +221,7 @@ async def handle_chat(message: str, db: Session) -> dict[str, Any]:
                 "params": {},
                 "explanation": explanation,
                 "error": str(exc),
-                "answer_text": f"Query failed: {exc}",
+                "answer_text": _build_query_error_answer(exc, schema),
             }
 
     # ── Step 6: Build final response ──────────────────────────────────────────

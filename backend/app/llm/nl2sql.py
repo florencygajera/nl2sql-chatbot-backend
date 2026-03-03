@@ -87,12 +87,13 @@ Return ONLY ONE T-SQL SELECT query. No markdown. No explanations.
 Do NOT wrap output in ```sql fences.
 
 CRITICAL SQL SERVER RULES:
-- Use square brackets [] for table and column names if they contain special characters or are reserved words.
-  Example: SELECT [Id], [FirstName] FROM [User_Master]
+- Use ONLY table names and column names that appear in the schema below.
+- If schema-qualified names are shown (example: dbo.Users), use that full schema-qualified table name.
+- Prefer bracketed identifiers for MSSQL names:
+  Example: SELECT TOP 10 [Id] FROM [dbo].[User_Master]
 - Do NOT use LIMIT. Instead use SELECT TOP N for limiting results.
-  Example: SELECT TOP 10 [Id] FROM [User_Master]
-- Do not use double quotes for identifiers; use square brackets.
-- Do not invent tables or columns. Use only the schema below.
+- Do not use double quotes for identifiers.
+- Do not invent tables or columns.
 
 Database Schema:
 {schema}

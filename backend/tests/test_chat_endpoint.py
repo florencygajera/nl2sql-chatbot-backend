@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.db.session import get_db
+import app.api.routes as api_routes
 
 # ── SQLite in-memory fixture ──────────────────────────────────────────────────
 
@@ -77,6 +78,9 @@ def override_get_db():
 
 
 app.dependency_overrides[get_db] = override_get_db
+# /chat currently creates sessions via app.api.routes.SessionLocal directly.
+# Point it to the test session so endpoint tests run against the in-memory DB.
+api_routes.SessionLocal = TestSession
 
 client = TestClient(app)
 
@@ -100,7 +104,7 @@ class TestChatEndpoint:
     def _mock_llm(self, return_sql: str):
         """Mock the LLM to return the given SQL string."""
         return patch(
-            "app.llm.nl2sql.generate_sql",
+            "app.services.chat_service.generate_sql",
             return_value=return_sql,
         )
 
