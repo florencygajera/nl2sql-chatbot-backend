@@ -138,10 +138,11 @@ async def chat(
                 await run_in_threadpool(db.close)
 
     except Exception as exc:
+        import traceback
         logger.exception("Unhandled error in /chat: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred: {exc}",
+            detail=f"An unexpected error occurred: {traceback.format_exc()}",
         ) from exc
 
 

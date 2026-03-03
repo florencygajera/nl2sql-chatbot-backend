@@ -1,0 +1,27 @@
+﻿python : 2026-03-02 
+21:33:56,821 | INFO     | 
+app.main | \u2705 NL2SQL 
+Chatbot started (debug=False)
+At line:1 char:133
++ ... -Seconds 2; python -m 
+uvicorn app.main:app --host 
+127.0.0.1 --port 80 ...
++                 ~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
+    + CategoryInfo           
+   : NotSpecified: (2026-03  
+  -02 21:3...d (debug=Fals   
+ e):String) [], RemoteExc    
+eption
+    + FullyQualifiedErrorId  
+   : NativeCommandError
+ 
+2026-03-02 21:34:17,140 | 
+WARNING  | app.api.db_routes 
+| CONNECT_DB: 
+url_type=odbc_connect 
+has_odbc=yes url_start=mssql+
+pyodbc:///?odbc_connect=DRIVE
+R%3D%7BODBC%20Driver%2017%20f
+or%20SQL%20Serve
