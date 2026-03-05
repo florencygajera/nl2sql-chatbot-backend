@@ -18,6 +18,16 @@ from app.core.config import get_settings
 from app.core.middleware import PerformanceMonitoringMiddleware
 
 settings = get_settings()
+import aiohttp
+import asyncio
+from app.core.config import validate_settings
+from app.db.connection_manager import cleanup_idle_connections
+
+_cleanup_task: asyncio.Task | None = None
+
+@app.on_event("startup")    
+async def _startup():
+    validate_settings(settings)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 

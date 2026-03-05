@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import List
-
+from cryptography.fernet import Fernet
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,16 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    def validate_settings(s: Settings) -> None:
+        # Validate Fernet key
+        try:
+            Fernet(s.FERNET_KEY.encode("utf-8"))
+        except Exception as e:
+            raise RuntimeError(
+                "Invalid FERNET_KEY. Generate one with:\n"
+                'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+        ) from e
 
     # ── Database ──────────────────────────────────────────────────────────────
     DATABASE_URL: str = "sqlite:///./default.db"

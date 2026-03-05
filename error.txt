@@ -1,0 +1,49 @@
+FERNET_KEY placeholder
+Sentence-transformers dependency (PyTorch issues on Windows)
+SQL Server ODBC dependency
+Environment validation
+Ollama connection handling
+Connection registry cleanup thread validation
+SQLAlchemy async dialect normalization edge cases
+SQL Server and Oracle require external native drivers
+
+Typical fixes:
+env validation
+try/catch wrappers
+dependency toggles
+better error messages
+
+Core NL2SQL pipeline verification
+
+Pipeline:
+User Question
+     ↓
+Schema Retrieval
+     ↓
+Table Selection
+     ↓
+LLM SQL Generation
+     ↓
+SQL Safety Validation
+     ↓
+Query Execution
+     ↓
+Result Formatting
+
+
+Possible issues
+• incorrect schema context passed to LLM
+• SQL dialect mismatch
+• LIMIT/TOP syntax injection errors
+• LLM returning malformed JSON
+• table selection returning empty set
+• repair loop not triggering correctly
+
+Production feature gaps from the prompt
+Missing or partial:
+Feature	Status
+Redis schema cache	not implemented
+DDL auto-invalidation	partial
+Monaco SQL editor	not added
+PWA offline mode	not added
+80% unit test coverage	not enforced
