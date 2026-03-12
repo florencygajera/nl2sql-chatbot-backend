@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen2.5-coder:0.5b"
+    
+    # ── NL2SQL Local LLM Service ───────────────────────────────────────────────
+    LLM_SERVICE_URL: str = "http://localhost:8000"  # Local NL2SQL inference server
 
     # ── Query safety ──────────────────────────────────────────────────────────
     DEFAULT_ROW_LIMIT: int = 50

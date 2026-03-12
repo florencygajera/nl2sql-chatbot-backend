@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import router
+from app.api.nl2sql_routes import router as nl2sql_router
 from app.core.config import get_settings
 from app.core.middleware import PerformanceMonitoringMiddleware
 
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
 
     # ── Routes ────────────────────────────────────────────────────────────────
     application.include_router(router, prefix="/api/v1")
+    application.include_router(nl2sql_router, prefix="/api/v1")
 
     # ── Root redirect ─────────────────────────────────────────────────────────
     @application.get("/", include_in_schema=False)
